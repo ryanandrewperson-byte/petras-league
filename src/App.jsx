@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -190,7 +190,7 @@ export default function App() {
     let active = true;
     (async () => {
       const { data } = await supabase.from('profiles').select('id, full_name, role, hero_color, codename, sport').order('role');
-      if (active) setMembers(data || []);
+      if (active) setMembers((data || []).filter(m => m.id !== session.user.id));
     })();
     return () => { active = false; };
   }, [isDev, session]);
@@ -220,13 +220,14 @@ export default function App() {
 function Shell({ profile, userId, tab, setTab, devOffset }) {
   const isParent = profile.role === 'parent';
   const [showProfile, setShowProfile] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   return (
     <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-9' : ''}`}>
       <div className="max-w-md mx-auto px-6 py-8">
         <TopBar name={profile.full_name}
           sub={isParent ? 'Commander' : `${profile.codename} · ${profile.sport}`}
           color={isParent ? '#FFC23C' : profile.hero_color}
-          onOpenProfile={() => setShowProfile(true)} />
+          onOpenProfile={() => setShowProfile(true)} onOpenGuide={() => setShowGuide(true)} />
         {tab === 'league'
           ? <LeaderBoard />
           : tab === 'challenges' && isParent
@@ -237,6 +238,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
       </div>
       <TabBar isParent={isParent} tab={tab} setTab={setTab} color={isParent ? '#FFC23C' : profile.hero_color} />
       {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
+      {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
     </div>
   );
 }
@@ -244,6 +246,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
 /* ---------- Desktop command center (parents on wide screens) ---------- */
 function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
   const [showProfile, setShowProfile] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
   const gold = '#FFC23C';
   const nav = [
     { id: 'overview', label: 'Overview', Icon: LayoutDashboard },
@@ -284,7 +287,10 @@ function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
               );
             })}
           </nav>
-          <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-2 m-3 px-3 py-2.5 rounded-xl text-muted hover:text-ghost border border-white/10 transition-colors">
+          <button onClick={() => setShowGuide(true)} className="flex items-center gap-2 mx-3 mb-1 px-3 py-2.5 rounded-xl text-muted hover:text-ghost hover:bg-white/5 transition-colors">
+            <HelpCircle size={16} /><span className="font-sans text-sm">How it works</span>
+          </button>
+          <button onClick={() => supabase.auth.signOut()} className="flex items-center gap-2 mx-3 mb-3 px-3 py-2.5 rounded-xl text-muted hover:text-ghost border border-white/10 transition-colors">
             <LogOut size={16} /><span className="font-sans text-sm">Sign out</span>
           </button>
         </aside>
@@ -307,6 +313,7 @@ function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
         </main>
       </div>
       {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={true} onClose={() => setShowProfile(false)} />}
+      {showGuide && <GuideSheet isParent={true} onClose={() => setShowGuide(false)} />}
     </div>
   );
 }
@@ -440,6 +447,23 @@ function TabBar({ isParent, tab, setTab, color }) {
 }
 
 /* ---------- Login ---------- */
+/* ---------- Password field with show/hide ---------- */
+function PasswordInput({ value, onChange, placeholder, onKeyDown, autoFocus }) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative w-full mb-3">
+      <input className="w-full px-4 py-3 pr-11 rounded-xl bg-panel text-ghost placeholder-muted outline-none border border-transparent focus:border-cyan"
+        type={show ? 'text' : 'password'} placeholder={placeholder} value={value} onChange={onChange}
+        onKeyDown={onKeyDown} autoFocus={autoFocus} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      <button type="button" tabIndex={-1} onClick={() => setShow(s => !s)}
+        aria-label={show ? 'Hide password' : 'Show password'}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ghost">
+        {show ? <EyeOff size={18} /> : <Eye size={18} />}
+      </button>
+    </div>
+  );
+}
+
 function Login() {
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
@@ -460,9 +484,9 @@ function Login() {
           <p className="font-sans text-muted text-sm mt-1">Sign in to your HQ</p>
         </div>
         <input className="w-full mb-3 px-4 py-3 rounded-xl bg-panel text-ghost placeholder-muted outline-none border border-transparent focus:border-cyan"
-          type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} />
-        <input className="w-full mb-3 px-4 py-3 rounded-xl bg-panel text-ghost placeholder-muted outline-none border border-transparent focus:border-cyan"
-          type="password" placeholder="Password" value={pw} onChange={e => setPw(e.target.value)}
+          type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)}
+          autoCapitalize="none" autoCorrect="off" spellCheck={false} inputMode="email" />
+        <PasswordInput placeholder="Password" value={pw} onChange={e => setPw(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && submit()} />
         {err && <p className="text-magenta text-sm mb-3">{err}</p>}
         <button onClick={submit} disabled={busy} className="w-full py-3 rounded-xl bg-cyan text-ink font-sans font-bold disabled:opacity-50">
@@ -499,10 +523,8 @@ function SetPassword({ session, onDone }) {
           <h1 className="font-display text-4xl tracking-wider text-cyan text-center">Set your password</h1>
           <p className="font-sans text-muted text-sm mt-2 text-center">First time in — pick a password only you know.</p>
         </div>
-        <input className="w-full mb-3 px-4 py-3 rounded-xl bg-panel text-ghost placeholder-muted outline-none border border-transparent focus:border-cyan"
-          type="password" placeholder="New password" value={pw} onChange={e => setPw(e.target.value)} />
-        <input className="w-full mb-3 px-4 py-3 rounded-xl bg-panel text-ghost placeholder-muted outline-none border border-transparent focus:border-cyan"
-          type="password" placeholder="Confirm new password" value={pw2} onChange={e => setPw2(e.target.value)}
+        <PasswordInput placeholder="New password" value={pw} onChange={e => setPw(e.target.value)} />
+        <PasswordInput placeholder="Confirm new password" value={pw2} onChange={e => setPw2(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && submit()} />
         {err && <p className="text-magenta text-sm mb-3">{err}</p>}
         <button onClick={submit} disabled={busy} className="w-full py-3 rounded-xl bg-cyan text-ink font-sans font-bold disabled:opacity-50">
@@ -1935,7 +1957,7 @@ function Burst({ color = '#FFC23C', label = 'POW!' }) {
 function Centered({ children }) {
   return <div className="min-h-screen bg-ink text-ghost flex items-center justify-center px-6 font-sans">{children}</div>;
 }
-function TopBar({ name, sub, color, onOpenProfile }) {
+function TopBar({ name, sub, color, onOpenProfile, onOpenGuide }) {
   return (
     <div className="flex items-center gap-3 mb-6 pb-5 border-b border-white/10">
       <button onClick={onOpenProfile} className="flex items-center gap-3 flex-1 min-w-0 text-left">
@@ -1946,6 +1968,7 @@ function TopBar({ name, sub, color, onOpenProfile }) {
         </div>
         <ChevronRight size={18} className="text-muted shrink-0" />
       </button>
+      {onOpenGuide && <button onClick={onOpenGuide} className="text-muted hover:text-ghost p-2 shrink-0" aria-label="How it works"><HelpCircle size={18} /></button>}
       <button onClick={() => supabase.auth.signOut()} className="text-muted hover:text-ghost p-2 shrink-0"><LogOut size={18} /></button>
     </div>
   );
@@ -2079,6 +2102,91 @@ function ProfileSheet({ profile, userId, isParent, onClose }) {
           : isParent
             ? <div className="grid gap-4"><CommanderCard name={profile.full_name} heroes={data.heroes} />{data.heroes.map(h => <HeroCard key={h.id} hero={h} weeklyMax={weeklyMax} />)}</div>
             : mine ? <HeroCard hero={mine} weeklyMax={weeklyMax} big /> : <p className="font-sans text-muted text-sm">No card yet — check in to start building your stats.</p>}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- In-app user guide ---------- */
+function GuideSection({ n, title, color, children }) {
+  return (
+    <div className="bg-panel rounded-2xl p-4 mb-3" style={{ borderLeft: `4px solid ${color}` }}>
+      <div className="flex items-baseline gap-2 mb-1.5">
+        {n != null && <span className="font-display text-lg leading-none" style={{ color }}>{n}</span>}
+        <h3 className="font-display text-lg tracking-wide text-ghost leading-none">{title}</h3>
+      </div>
+      <div className="font-sans text-sm leading-relaxed" style={{ color: '#D9DAE6' }}>{children}</div>
+    </div>
+  );
+}
+
+function KidGuide() {
+  const c = '#29E0FF';
+  return (
+    <>
+      <GuideSection n="1" title="Check in every day" color={c}>
+        Open <b>My Day</b> and tap each task as you finish it. Snap a <b>photo</b> as proof when you can. Doing this every day is the whole game.
+      </GuideSection>
+      <GuideSection n="2" title="Points unlock phone time" color={c}>
+        Every task you finish is a point. The more of <b>today's</b> tasks you complete, the more <b>phone time</b> you unlock for the day — your card shows where you stand.
+      </GuideSection>
+      <GuideSection n="3" title="Your week earns allowance" color={c}>
+        Your points across the whole week set your <b>allowance</b>. The closer you get to finishing everything, the bigger the payout — miss days and it drops.
+      </GuideSection>
+      <GuideSection n="4" title="Be the champion" color={c}>
+        Whoever scores the most points in a week is crowned <b>champion</b> and earns a bonus on top. Tap <b>League</b> to see where you rank.
+      </GuideSection>
+      <GuideSection n="5" title="Claim power-ups" color={c}>
+        <b>Power-Ups</b> are special bounties your parents set for big goals. When you hit one, tap to <b>claim</b> it and add proof — they'll verify it and pay out.
+      </GuideSection>
+      <GuideSection title="How to win" color="#46E5A0">
+        Check in <b>every single day</b>, aim to finish <b>all</b> your tasks, and don't skip. Small daily wins stack up fast — consistency beats cramming.
+      </GuideSection>
+    </>
+  );
+}
+
+function ParentGuide() {
+  const g = '#FFC23C';
+  return (
+    <>
+      <GuideSection n="1" title="Review & approve each day" color={g}>
+        In <b>Athletes</b>, tap any day in a kid's week to see their check-ins and proof photos. Fix anything that's off, then <b>approve &amp; lock</b> the day so it counts.
+      </GuideSection>
+      <GuideSection n="2" title="Pay out" color={g}>
+        <b>Allowance</b> is calculated automatically from approved points, plus the champion bonus. In <b>Payouts</b>, claimed <b>power-ups</b> wait for you to <b>verify</b> (with proof) and mark <b>paid</b>.
+      </GuideSection>
+      <GuideSection n="3" title="Run the season" color={g}>
+        In <b>Challenges</b>, build and edit each season — its tasks, the reward ladder, and power-ups. One challenge is active at a time, set by its dates; gaps between them are a "break."
+      </GuideSection>
+      <GuideSection title="The system (to explain to the kids)" color="#29E0FF">
+        One finished task = one point. <b>Daily</b> points unlock that day's phone time, the <b>week's</b> points set allowance, the top scorer wins the <b>champion</b> bonus, and <b>power-ups</b> are extra bounties you set for big goals.
+      </GuideSection>
+      <GuideSection title="On a computer" color={g}>
+        Open the app on a laptop or desktop for the wide <b>command center</b> — an overview dashboard, every athlete side by side, and the same payout and challenge tools. On a phone you get the streamlined app.
+      </GuideSection>
+    </>
+  );
+}
+
+function GuideSheet({ isParent, onClose }) {
+  return (
+    <div className="fixed inset-0 z-40 overflow-y-auto" style={{ background: 'rgba(5,5,8,0.92)', backdropFilter: 'blur(2px)' }}>
+      <div className="max-w-md mx-auto px-5 py-6 min-h-full">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="font-display text-2xl tracking-wide text-ghost">How it works</h2>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-raised flex items-center justify-center text-muted text-lg leading-none">✕</button>
+        </div>
+        <p className="font-sans text-muted text-xs mb-5">{isParent ? 'Your guide to running the Petras League.' : 'Your guide to winning the Petras League.'}</p>
+        {isParent ? <ParentGuide /> : <KidGuide />}
+        <GuideSection title="Add it to your phone" color="#FF3D7F">
+          Keep Petras League one tap away, like a real app:
+          <div className="mt-2 grid gap-1.5">
+            <div><b>iPhone (Safari):</b> tap <b>Share</b>, then <b>Add to Home Screen</b>.</div>
+            <div><b>Android (Chrome):</b> tap the <b>⋮</b> menu, then <b>Add to Home screen</b>.</div>
+          </div>
+        </GuideSection>
+        <p className="font-sans text-muted text-center mt-5 mb-2" style={{ fontSize: '11px' }}>This guide updates as the app improves.</p>
       </div>
     </div>
   );
