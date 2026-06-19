@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -122,7 +122,7 @@ function CelebrationProvider({ children }) {
 /* ---------- App shell (auth + routing) ---------- */
 const DEV_EMAILS = ['ryanandrewperson@gmail.com'];
 
-function DevViewAs({ members, viewAs, onPick, onReset, devView, setDevView }) {
+function DevViewAs({ members, viewAs, onPick, onReset, devView, setDevView, setShowUsage }) {
   return (
     <div className="fixed top-0 inset-x-0 z-50" style={{ background: 'rgba(11,11,15,0.94)', borderBottom: '1px dashed #FF3D7F' }}>
       <div className="max-w-5xl mx-auto px-3 py-1.5 flex items-center gap-2">
@@ -140,12 +140,208 @@ function DevViewAs({ members, viewAs, onPick, onReset, devView, setDevView }) {
             );
           })}
         </div>
+        <button onClick={() => setShowUsage(true)} title="Usage stats"
+          className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full font-sans text-xs"
+          style={{ background: '#20212B', color: '#9A9CB0' }}>
+          <Activity size={13} /> Stats
+        </button>
         <div className="flex items-center gap-1 shrink-0 pl-2 border-l border-white/10">
           {['auto', 'mobile', 'desktop'].map(v => (
             <button key={v} onClick={() => setDevView(v)} className="px-2 py-0.5 rounded-full font-sans text-xs capitalize"
               style={{ background: devView === v ? '#29E0FF' : '#20212B', color: devView === v ? '#0B0B0F' : '#9A9CB0' }}>{v}</button>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- DEV: Usage dashboard (owner-only) ---------- */
+function UsageDashboard({ onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [d, setD] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+    const dkey = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    (async () => {
+      try {
+        const today = todayKey();
+        // Window = current challenge if one is active, else trailing 30 days.
+        const { data: chs } = await supabase.from('challenges').select('id, name, start_date, end_date')
+          .lte('start_date', today).gte('end_date', today).order('start_date', { ascending: false }).limit(1);
+        const ch = (chs && chs[0]) || null;
+        let start = ch ? ch.start_date : null;
+        if (!start) { const s = new Date(); s.setDate(s.getDate() - 29); start = dkey(s); }
+
+        const [profRes, loginRes, entryRes] = await Promise.all([
+          supabase.from('profiles').select('id, full_name, role, hero_color, codename, sport'),
+          supabase.rpc('usage_logins'),
+          supabase.from('daily_entries').select('id, kid_id, entry_date, status, approved_by').gte('entry_date', start),
+        ]);
+        const profs = profRes.data || [];
+        const loginRows = loginRes.data || [];
+        const entries = entryRes.data || [];
+
+        const loginById = {};
+        loginRows.forEach(l => { loginById[l.id] = l; });
+
+        // Tasks completed per kid across the window.
+        const tasksByKid = {};
+        const entryIds = entries.map(e => e.id);
+        if (entryIds.length) {
+          const kidByEntry = {};
+          entries.forEach(e => { kidByEntry[e.id] = e.kid_id; });
+          const { data: et } = await supabase.from('entry_tasks').select('entry_id, completed').in('entry_id', entryIds);
+          (et || []).forEach(t => { if (t.completed) { const k = kidByEntry[t.entry_id]; tasksByKid[k] = (tasksByKid[k] || 0) + 1; } });
+        }
+
+        // Check-in dates per kid + parent approval counts.
+        const datesByKid = {};
+        const approvalsByParent = {};
+        entries.forEach(e => {
+          (datesByKid[e.kid_id] = datesByKid[e.kid_id] || new Set()).add(e.entry_date);
+          if (e.approved_by) approvalsByParent[e.approved_by] = (approvalsByParent[e.approved_by] || 0) + 1;
+        });
+        const streakOf = (set) => {
+          if (!set || !set.size) return 0;
+          let n = 0; const dt = new Date();
+          while (set.has(dkey(dt))) { n++; dt.setDate(dt.getDate() - 1); }
+          return n;
+        };
+
+        // 14-day check-in sparkline (all athletes).
+        const days = Array.from({ length: 14 }, (_, i) => { const x = new Date(); x.setDate(x.getDate() - (13 - i)); return dkey(x); });
+        const perDay = days.map(day => entries.filter(e => e.entry_date === day).length);
+
+        // Pulse.
+        const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+        const everLoggedIn = loginRows.filter(l => l.last_sign_in_at).length;
+        const active7 = loginRows.filter(l => l.last_sign_in_at && new Date(l.last_sign_in_at) >= weekAgo).length;
+
+        if (active) {
+          setD({
+            challengeName: ch ? ch.name : null,
+            kids: profs.filter(p => p.role !== 'parent'),
+            parents: profs.filter(p => p.role === 'parent'),
+            totalAccounts: profs.length, everLoggedIn, active7, totalCheckins: entries.length,
+            loginById, datesByKid, tasksByKid, approvalsByParent, streakOf, days, perDay,
+          });
+          setLoading(false);
+        }
+      } catch (e) {
+        if (active) { setError(e.message || 'Failed to load usage'); setLoading(false); }
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  const ago = (ts) => {
+    if (!ts) return 'never';
+    const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+    const dd = Math.floor(h / 24); if (dd < 30) return `${dd}d ago`;
+    return `${Math.floor(dd / 30)}mo ago`;
+  };
+  const mdy = (ds) => { if (!ds) return '—'; const p = ds.split('-'); return `${p[1]}/${p[2]}`; };
+  const lastCheckin = (set) => { if (!set || !set.size) return null; return Array.from(set).sort().slice(-1)[0]; };
+
+  const gold = '#FFC23C';
+  const Stat = ({ label, value, sub }) => (
+    <div className="bg-raised rounded-2xl px-3 py-3 flex-1 min-w-0">
+      <div className="font-display text-2xl leading-none text-ghost">{value}</div>
+      <div className="font-sans text-[11px] uppercase tracking-wider text-muted mt-1 truncate">{label}</div>
+      {sub && <div className="font-sans text-[11px] text-muted/70 mt-0.5 truncate">{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 z-[60] overflow-y-auto bg-ink/95 backdrop-blur-sm">
+      <div className="max-w-2xl mx-auto px-4 py-5 pb-16">
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2">
+            <Activity size={20} style={{ color: '#FF3D7F' }} />
+            <h1 className="font-display text-3xl tracking-wide text-ghost">USAGE</h1>
+          </div>
+          <button onClick={onClose} className="w-9 h-9 rounded-full bg-raised flex items-center justify-center text-muted hover:text-ghost">
+            <X size={18} />
+          </button>
+        </div>
+        {d && <p className="font-sans text-xs text-muted mb-4">{d.challengeName ? `Challenge: ${d.challengeName}` : 'Trailing 30 days'} · live data</p>}
+
+        {loading && <p className="font-sans text-muted text-sm mt-6">Loading usage…</p>}
+        {error && <p className="font-sans text-sm mt-6" style={{ color: '#FF6B6B' }}>Couldn’t load: {error}</p>}
+
+        {d && !loading && (
+          <>
+            <div className="flex gap-2 mb-5">
+              <Stat label="Logged in" value={`${d.everLoggedIn}/${d.totalAccounts}`} sub="accounts ever" />
+              <Stat label="Active" value={d.active7} sub="signed in ≤7d" />
+              <Stat label="Check-ins" value={d.totalCheckins} sub="this window" />
+            </div>
+
+            <div className="bg-panel rounded-2xl px-4 py-3 mb-5">
+              <div className="font-sans text-[11px] uppercase tracking-wider text-muted mb-2">Check-ins · last 14 days</div>
+              <div className="flex items-end gap-1 h-16">
+                {d.perDay.map((n, i) => {
+                  const max = Math.max(1, ...d.perDay);
+                  return <div key={i} className="flex-1 rounded-t" title={`${mdy(d.days[i])}: ${n}`}
+                    style={{ height: `${Math.max(4, (n / max) * 100)}%`, background: n ? '#29E0FF' : '#20212B' }} />;
+                })}
+              </div>
+            </div>
+
+            <div className="font-display text-lg tracking-wide text-ghost mb-2">Athletes</div>
+            <div className="space-y-2 mb-5">
+              {d.kids.map(k => {
+                const lg = d.loginById[k.id];
+                const lc = lastCheckin(d.datesByKid[k.id]);
+                const streak = d.streakOf(d.datesByKid[k.id]);
+                return (
+                  <div key={k.id} className="bg-panel rounded-2xl px-3 py-3 flex items-center gap-3">
+                    <span className="w-9 h-9 rounded-xl flex items-center justify-center font-display text-ink shrink-0" style={{ background: k.hero_color }}>{k.full_name[0]}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-display text-base text-ghost leading-none truncate">{k.full_name}</div>
+                      <div className="font-sans text-[11px] text-muted mt-1">
+                        Last login {lg ? ago(lg.last_sign_in_at) : 'never'}
+                        {lg && !lg.last_sign_in_at && ' · not yet'}
+                      </div>
+                    </div>
+                    <div className="flex gap-3 shrink-0 text-center">
+                      <div><div className="font-display text-lg text-ghost leading-none">{(d.datesByKid[k.id] || new Set()).size}</div><div className="font-sans text-[10px] text-muted uppercase">days</div></div>
+                      <div><div className="font-display text-lg leading-none" style={{ color: streak ? '#29E0FF' : '#9A9CB0' }}>{streak}</div><div className="font-sans text-[10px] text-muted uppercase">streak</div></div>
+                      <div><div className="font-display text-lg text-ghost leading-none">{d.tasksByKid[k.id] || 0}</div><div className="font-sans text-[10px] text-muted uppercase">tasks</div></div>
+                      <div className="w-12"><div className="font-sans text-xs text-ghost leading-none mt-1">{mdy(lc)}</div><div className="font-sans text-[10px] text-muted uppercase mt-1">last</div></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="font-display text-lg tracking-wide text-ghost mb-2">Commanders</div>
+            <div className="space-y-2">
+              {d.parents.map(p => {
+                const lg = d.loginById[p.id];
+                return (
+                  <div key={p.id} className="bg-panel rounded-2xl px-3 py-3 flex items-center gap-3">
+                    <span className="w-9 h-9 rounded-xl flex items-center justify-center font-display text-ink shrink-0" style={{ background: gold }}>{p.full_name[0]}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="font-display text-base text-ghost leading-none truncate">{p.full_name}</div>
+                      <div className="font-sans text-[11px] text-muted mt-1">Last login {lg ? ago(lg.last_sign_in_at) : 'never'}</div>
+                    </div>
+                    <div className="text-center shrink-0">
+                      <div className="font-display text-lg text-ghost leading-none">{d.approvalsByParent[p.id] || 0}</div>
+                      <div className="font-sans text-[10px] text-muted uppercase">approvals</div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -159,6 +355,7 @@ export default function App() {
   const [members, setMembers] = useState([]);
   const [viewAs, setViewAs] = useState(null);
   const [devView, setDevView] = useState('auto');
+  const [showUsage, setShowUsage] = useState(false);
   const [wide, setWide] = useState(typeof window !== 'undefined' && window.innerWidth >= 1024);
   useEffect(() => {
     const onResize = () => setWide(window.innerWidth >= 1024);
@@ -206,9 +403,10 @@ export default function App() {
   const desktop = isParent && (devView === 'desktop' || (devView === 'auto' && wide));
   return (
     <CelebrationProvider>
-      {isDev && <DevViewAs members={members} viewAs={viewAs} devView={devView} setDevView={setDevView}
+      {isDev && <DevViewAs members={members} viewAs={viewAs} devView={devView} setDevView={setDevView} setShowUsage={setShowUsage}
         onPick={(m) => { setViewAs(m); setTab('main'); }}
         onReset={() => { setViewAs(null); setTab('main'); }} />}
+      {isDev && showUsage && <UsageDashboard onClose={() => setShowUsage(false)} />}
       {desktop
         ? <DesktopShell key={effId} profile={effProfile} userId={effId} tab={tab} setTab={setTab} devOffset={isDev} />
         : <Shell key={effId} profile={effProfile} userId={effId} tab={tab} setTab={setTab} devOffset={isDev} />}
