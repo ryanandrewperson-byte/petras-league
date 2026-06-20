@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -417,24 +417,78 @@ export default function App() {
 /* ---------- Shell with tabs ---------- */
 function Shell({ profile, userId, tab, setTab, devOffset }) {
   const isParent = profile.role === 'parent';
+  const accent = isParent ? '#FFC23C' : profile.hero_color;
   const [showProfile, setShowProfile] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+
+  // ----- Pull-to-refresh (soft: remounts the current screen -> refetch) -----
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [pull, setPull] = useState(0);          // px the screen is pulled down
+  const [refreshing, setRefreshing] = useState(false);
+  const startY = useRef(null);                   // null = not tracking a pull
+  const PULL_THRESHOLD = 70;                      // px past which a release triggers refresh
+  const atTop = () => (window.scrollY || document.documentElement.scrollTop || 0) <= 0;
+
+  const onTouchStart = (e) => {
+    if (refreshing) return;
+    startY.current = atTop() ? e.touches[0].clientY : null;
+  };
+  const onTouchMove = (e) => {
+    if (startY.current == null || refreshing) return;
+    const dy = e.touches[0].clientY - startY.current;
+    // Only engage on a downward drag while still at the very top; otherwise let the page scroll normally.
+    setPull(dy > 0 && atTop() ? Math.min(110, dy * 0.5) : 0);
+  };
+  const onTouchEnd = () => {
+    if (startY.current == null) return;
+    startY.current = null;
+    if (pull >= PULL_THRESHOLD) {
+      setRefreshing(true);
+      setPull(PULL_THRESHOLD);
+      setRefreshKey((k) => k + 1);               // remount -> each screen's loader runs again
+      setTimeout(() => { setRefreshing(false); setPull(0); }, 750);
+    } else {
+      setPull(0);
+    }
+  };
+
+  const tracking = startY.current != null;
+  const snap = tracking ? 'none' : 'transform .25s ease, opacity .2s ease';
+
   return (
-    <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-9' : ''}`}>
-      <div className="max-w-md mx-auto px-6 py-8">
-        <TopBar name={profile.full_name}
-          sub={isParent ? 'Commander' : `${profile.codename} · ${profile.sport}`}
-          color={isParent ? '#FFC23C' : profile.hero_color}
-          onOpenProfile={() => setShowProfile(true)} onOpenGuide={() => setShowGuide(true)} />
-        {tab === 'league'
-          ? <LeaderBoard />
-          : tab === 'challenges' && isParent
-            ? <ChallengeManager userId={userId} />
-            : tab === 'bonus'
-              ? (isParent ? <ParentPayouts userId={userId} /> : <KidPowerUps profile={profile} userId={userId} />)
-              : (isParent ? <ParentAthletes userId={userId} /> : <KidAthletes profile={profile} userId={userId} />)}
+    <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-9' : ''}`}
+      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+
+      {/* Pull-to-refresh spinner */}
+      <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
+        style={{ top: devOffset ? 40 : 8, opacity: pull > 4 || refreshing ? 1 : 0,
+          transform: `translateY(${pull}px)`, transition: snap }}>
+        <div className="w-9 h-9 rounded-full bg-raised flex items-center justify-center"
+          style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
+          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''}
+            style={{ color: accent, transform: refreshing ? 'none' : `rotate(${pull * 2.4}deg)` }} />
+        </div>
       </div>
-      <TabBar isParent={isParent} tab={tab} setTab={setTab} color={isParent ? '#FFC23C' : profile.hero_color} />
+
+      <div style={{ transform: `translateY(${pull}px)`, transition: snap }}>
+        <div className="max-w-md mx-auto px-6 py-8">
+          <TopBar name={profile.full_name}
+            sub={isParent ? 'Commander' : `${profile.codename} · ${profile.sport}`}
+            color={accent}
+            onOpenProfile={() => setShowProfile(true)} onOpenGuide={() => setShowGuide(true)} />
+          <div key={refreshKey}>
+            {tab === 'league'
+              ? <LeaderBoard />
+              : tab === 'challenges' && isParent
+                ? <ChallengeManager userId={userId} />
+                : tab === 'bonus'
+                  ? (isParent ? <ParentPayouts userId={userId} /> : <KidPowerUps profile={profile} userId={userId} />)
+                  : (isParent ? <ParentAthletes userId={userId} /> : <KidAthletes profile={profile} userId={userId} />)}
+          </div>
+        </div>
+      </div>
+
+      <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} />
       {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
       {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
     </div>
