@@ -128,32 +128,39 @@ const DEV_EMAILS = ['ryanandrewperson@gmail.com'];
 
 function DevViewAs({ members, viewAs, onPick, onReset, devView, setDevView, setShowUsage }) {
   return (
-    <div className="fixed top-0 inset-x-0 z-50" style={{ background: 'rgba(11,11,15,0.94)', borderBottom: '1px dashed #FF3D7F' }}>
-      <div className="max-w-5xl mx-auto px-3 py-1.5 flex items-center gap-2">
-        <span className="font-display text-xs tracking-widest shrink-0" style={{ color: '#FF3D7F' }}>DEV</span>
-        <div className="flex items-center gap-2 overflow-x-auto flex-1 min-w-0">
-          <button onClick={onReset} className="shrink-0 px-2 py-0.5 rounded-full font-sans text-xs" style={{ background: !viewAs ? '#FF3D7F' : '#20212B', color: !viewAs ? '#0B0B0F' : '#9A9CB0' }}>Me</button>
-          {members.map(m => {
-            const on = viewAs && viewAs.id === m.id;
-            return (
-              <button key={m.id} onClick={() => onPick(m)} className="shrink-0 px-2 py-0.5 rounded-full font-sans text-xs flex items-center gap-1"
-                style={{ background: on ? m.hero_color : '#20212B', color: on ? '#0B0B0F' : '#9A9CB0' }}>
-                <span className="w-3.5 h-3.5 rounded-full inline-block" style={{ background: m.hero_color }} />
-                {m.full_name.split(' ')[0]}
-              </button>
-            );
-          })}
+    <div className="fixed top-0 inset-x-0 z-50" style={{ background: 'rgba(17,13,22,0.97)', borderBottom: '1px dashed #FF3D7F', boxShadow: '0 2px 10px -4px rgba(0,0,0,0.6)' }}>
+      <div className="max-w-5xl mx-auto px-3">
+        <div className="flex items-center gap-2 py-1.5">
+          <span className="font-display tracking-widest shrink-0" style={{ color: '#FF3D7F', fontSize: '11px' }}>DEV</span>
+          <span className="font-sans shrink-0" style={{ fontSize: '10px', color: '#6E7080' }}>as</span>
+          <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
+            <button onClick={onReset} className="shrink-0 px-2 py-0.5 rounded-full font-sans text-xs" style={{ background: !viewAs ? '#FF3D7F' : '#20212B', color: !viewAs ? '#0B0B0F' : '#9A9CB0' }}>Me</button>
+            {members.map(m => {
+              const on = viewAs && viewAs.id === m.id;
+              return (
+                <button key={m.id} onClick={() => onPick(m)} className="shrink-0 px-2 py-0.5 rounded-full font-sans text-xs flex items-center gap-1"
+                  style={{ background: on ? m.hero_color : '#20212B', color: on ? '#0B0B0F' : '#9A9CB0' }}>
+                  <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: m.hero_color }} />
+                  {m.full_name.split(' ')[0]}
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <button onClick={() => setShowUsage(true)} title="Usage stats"
-          className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full font-sans text-xs"
-          style={{ background: '#20212B', color: '#9A9CB0' }}>
-          <Activity size={13} /> Stats
-        </button>
-        <div className="flex items-center gap-1 shrink-0 pl-2 border-l border-white/10">
-          {['auto', 'mobile', 'desktop'].map(v => (
-            <button key={v} onClick={() => setDevView(v)} className="px-2 py-0.5 rounded-full font-sans text-xs capitalize"
-              style={{ background: devView === v ? '#29E0FF' : '#20212B', color: devView === v ? '#0B0B0F' : '#9A9CB0' }}>{v}</button>
-          ))}
+        <div className="flex items-center gap-2 py-1.5 border-t" style={{ borderColor: 'rgba(255,61,127,0.18)' }}>
+          <button onClick={() => setShowUsage(true)} title="Usage stats"
+            className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full font-sans text-xs"
+            style={{ background: '#20212B', color: '#9A9CB0' }}>
+            <Activity size={13} /> Stats
+          </button>
+          <span className="flex-1" />
+          <span className="font-sans shrink-0" style={{ fontSize: '10px', color: '#6E7080' }}>view</span>
+          <div className="flex items-center gap-1 shrink-0">
+            {['auto', 'mobile', 'desktop'].map(v => (
+              <button key={v} onClick={() => setDevView(v)} className="px-2 py-0.5 rounded-full font-sans text-xs capitalize"
+                style={{ background: devView === v ? '#29E0FF' : '#20212B', color: devView === v ? '#0B0B0F' : '#9A9CB0' }}>{v}</button>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -502,12 +509,12 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
     : `${Math.floor(age / 3600000)}h ${Math.floor((age % 3600000) / 60000)}m ago`;
 
   return (
-    <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-9' : ''}`}
+    <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-16' : ''}`}
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
 
       {/* Pull-to-refresh spinner */}
       <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
-        style={{ top: devOffset ? 40 : 8, opacity: pull > 4 || refreshing ? 1 : 0,
+        style={{ top: devOffset ? 70 : 8, opacity: pull > 4 || refreshing ? 1 : 0,
           transform: `translateY(${pull}px)`, transition: snap }}>
         <div className="w-9 h-9 rounded-full bg-raised flex items-center justify-center"
           style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
@@ -518,7 +525,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
 
       {/* Occasional "pull to refresh" nudge — only when data is stale */}
       <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
-        style={{ top: devOffset ? 44 : 12, opacity: nudge && pull === 0 && !refreshing ? 1 : 0, transition: 'opacity .3s ease' }}>
+        style={{ top: devOffset ? 74 : 12, opacity: nudge && pull === 0 && !refreshing ? 1 : 0, transition: 'opacity .3s ease' }}>
         <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-raised"
           style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
           <ChevronDown size={14} className="animate-bounce" style={{ color: accent }} />
@@ -576,7 +583,7 @@ function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
     challenges: 'Build and run the season: tasks, reward ladder, and power-ups.',
   };
   return (
-    <div className={`min-h-screen bg-ink text-ghost font-sans ${devOffset ? 'pt-9' : ''}`}>
+    <div className={`min-h-screen bg-ink text-ghost font-sans ${devOffset ? 'pt-16' : ''}`}>
       <div className="flex min-h-screen">
         <aside className="w-64 shrink-0 border-r border-white/10 bg-panel flex flex-col">
           <button onClick={() => setShowProfile(true)} className="flex items-center gap-3 p-5 text-left border-b border-white/10 hover:bg-white/5 transition-colors">
