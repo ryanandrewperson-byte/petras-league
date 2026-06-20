@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -455,6 +455,44 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
   const tracking = startY.current != null;
   const snap = tracking ? 'none' : 'transform .25s ease, opacity .2s ease';
 
+  // ----- Freshness clock + occasional stale-data nudge -----
+  const STALE_MS = 60 * 60 * 1000;                 // data older than 1h is "stale"
+  const [refreshedAt, setRefreshedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+  const [nudge, setNudge] = useState(false);
+
+  // Stamp the load time whenever the visible screen refetches (tab change or pull-refresh).
+  useEffect(() => { setRefreshedAt(Date.now()); }, [tab, refreshKey]);
+
+  // Tick so the "Updated Xm ago" label stays current.
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Nudge: 7s after landing/returning (and re-checked each minute), pulse only if data is stale.
+  useEffect(() => {
+    let dwell, recheck;
+    const fire = () => {
+      if (Date.now() - refreshedAt > STALE_MS) {
+        setNudge(true);
+        setTimeout(() => setNudge(false), 3600);
+      }
+    };
+    const startDwell = () => { clearTimeout(dwell); dwell = setTimeout(fire, 7000); };
+    const onVis = () => { if (document.visibilityState === 'visible') startDwell(); };
+    startDwell();
+    recheck = setInterval(fire, 60000);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { clearTimeout(dwell); clearInterval(recheck); document.removeEventListener('visibilitychange', onVis); };
+  }, [tab, refreshKey, refreshedAt]);
+
+  const age = now - refreshedAt;
+  const stale = age > STALE_MS;
+  const ageLabel = age < 60000 ? 'just now'
+    : age < STALE_MS ? `${Math.floor(age / 60000)}m ago`
+    : `${Math.floor(age / 3600000)}h ${Math.floor((age % 3600000) / 60000)}m ago`;
+
   return (
     <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-9' : ''}`}
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
@@ -470,12 +508,26 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
         </div>
       </div>
 
+      {/* Occasional "pull to refresh" nudge — only when data is stale */}
+      <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
+        style={{ top: devOffset ? 44 : 12, opacity: nudge && pull === 0 && !refreshing ? 1 : 0, transition: 'opacity .3s ease' }}>
+        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-raised"
+          style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
+          <ChevronDown size={14} className="animate-bounce" style={{ color: accent }} />
+          <span className="font-sans" style={{ fontSize: '11px', color: accent, fontWeight: 600 }}>Pull to refresh</span>
+        </div>
+      </div>
+
       <div style={{ transform: `translateY(${pull}px)`, transition: snap }}>
         <div className="max-w-md mx-auto px-6 py-8">
           <TopBar name={profile.full_name}
             sub={isParent ? 'Commander' : `${profile.codename} · ${profile.sport}`}
             color={accent}
             onOpenProfile={() => setShowProfile(true)} onOpenGuide={() => setShowGuide(true)} />
+          <div className="flex items-center gap-1.5 -mt-3 mb-4" style={{ color: stale ? '#E0A53C' : '#9A9CB0' }}>
+            <RefreshCw size={12} />
+            <span className="font-sans" style={{ fontSize: '11px' }}>Updated {ageLabel}</span>
+          </div>
           <div key={refreshKey}>
             {tab === 'league'
               ? <LeaderBoard />
