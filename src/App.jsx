@@ -456,7 +456,10 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
   const snap = tracking ? 'none' : 'transform .25s ease, opacity .2s ease';
 
   // ----- Freshness clock + occasional stale-data nudge -----
-  const STALE_MS = 60 * 60 * 1000;                 // data older than 1h is "stale"
+  const STALE_MS = 60 * 60 * 1000;                 // freshness line turns amber once data is 1h+ old
+  // Learning period: nudge people to pull-refresh whenever a screen's data is >1 min old (7s after landing).
+  // Once everyone knows the gesture, bump NUDGE_AFTER_MS back up to STALE_MS so it only nags when truly stale.
+  const NUDGE_AFTER_MS = 60 * 1000;
   const [refreshedAt, setRefreshedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
   const [nudge, setNudge] = useState(false);
@@ -474,7 +477,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
   useEffect(() => {
     let dwell, recheck;
     const fire = () => {
-      if (Date.now() - refreshedAt > STALE_MS) {
+      if (Date.now() - refreshedAt > NUDGE_AFTER_MS) {
         setNudge(true);
         setTimeout(() => setNudge(false), 3600);
       }
@@ -880,7 +883,16 @@ function WeekStrip({ points, color, onSelectDay, selectedDate, dailyMax = 10, ti
       <div className="flex gap-1.5 mt-1">
         {labels.map((l, i) => {
           const isSel = selectedDate === dates[i];
-          return <span key={i} className="flex-1 text-center font-sans" style={{ fontSize: '10px', color: isSel ? '#F4F5FA' : i === todayIdx ? color : '#9A9CB0', fontWeight: isSel ? 700 : 400 }}>{l}</span>;
+          const isToday = i === todayIdx;
+          const future = i > todayIdx;
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center leading-none">
+              <span className="font-sans" style={{ fontSize: '10px', color: isSel ? '#F4F5FA' : isToday ? color : '#9A9CB0', fontWeight: isSel ? 700 : 400 }}>{l}</span>
+              <span className="font-sans mt-0.5" style={{ fontSize: '9px', color: isSel ? '#F4F5FA' : '#6E7080', fontWeight: isSel ? 700 : 400 }}>
+                {future ? '–' : `${vals[i]}/${dailyMax}`}
+              </span>
+            </div>
+          );
         })}
       </div>
     </div>
