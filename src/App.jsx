@@ -55,6 +55,10 @@ function weekLabel(ds) {
   const [y, m, d] = ds.split('-').map(Number);
   return 'Week of ' + new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
+// Session-reveal signal: bumps on each new session (initial load = 1; pull-refresh increments).
+let REVEAL_SESSION = 1;
+let REVEAL_SHOWN = 0;
+
 function dayName(ds) {
   const [y, m, d] = ds.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short' });
@@ -445,6 +449,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
     if (pull >= PULL_THRESHOLD) {
       setRefreshing(true);
       setPull(PULL_THRESHOLD);
+      REVEAL_SESSION += 1;                        // replay the parent session-reveal on pull-refresh
       setRefreshKey((k) => k + 1);               // remount -> each screen's loader runs again
       setTimeout(() => { setRefreshing(false); setPull(0); }, 750);
     } else {
@@ -843,10 +848,17 @@ function SetPassword({ session, onDone }) {
 }
 
 /* ---------- 7-day points strip (Athletes dashboard) ---------- */
-function WeekStrip({ points, color, onSelectDay, selectedDate, dailyMax = 10, tiers }) {
+function WeekStrip({ points, color, onSelectDay, selectedDate, dailyMax = 10, tiers, animateIn = false, startDelay = 0 }) {
   const dates = weekDates();
   const labels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
   const todayIdx = new Date().getDay();
+  const [grown, setGrown] = useState(!animateIn);
+  useEffect(() => {
+    if (!animateIn) { setGrown(true); return; }
+    setGrown(false);
+    const t = setTimeout(() => setGrown(true), startDelay + 30);
+    return () => clearTimeout(t);
+  }, [animateIn, startDelay]);
   const vals = dates.map(d => points[d] || 0);
   const total = vals.reduce((a, b) => a + b, 0);
   const weeklyMax = dailyMax * 7;
@@ -866,13 +878,16 @@ function WeekStrip({ points, color, onSelectDay, selectedDate, dailyMax = 10, ti
           const future = i > todayIdx;
           const isToday = i === todayIdx;
           const isSel = selectedDate === dates[i];
-          const h = future ? 8 : Math.max(8, (v / Math.max(1, dailyMax)) * 100);
+          const targetH = future ? 8 : Math.max(8, (v / Math.max(1, dailyMax)) * 100);
+          const h = grown ? targetH : 0;
           const bar = (
             <div className="w-full rounded" style={{
               height: `${h}%`,
               background: future ? '#20212B' : color,
               opacity: future ? 1 : isToday ? 1 : 0.5,
               boxShadow: isSel ? `0 0 0 2px #F4F5FA` : isToday ? `0 0 0 1.5px ${color}` : 'none',
+              transition: animateIn ? 'height .4s cubic-bezier(.2,.8,.2,1)' : 'none',
+              transitionDelay: animateIn ? `${i * 70}ms` : '0ms',
             }} />
           );
           return interactive
@@ -888,7 +903,8 @@ function WeekStrip({ points, color, onSelectDay, selectedDate, dailyMax = 10, ti
           return (
             <div key={i} className="flex-1 flex flex-col items-center leading-none">
               <span className="font-sans" style={{ fontSize: '10px', color: isSel ? '#F4F5FA' : isToday ? color : '#9A9CB0', fontWeight: isSel ? 700 : 400 }}>{l}</span>
-              <span className="font-sans mt-0.5" style={{ fontSize: '9px', color: isSel ? '#F4F5FA' : '#6E7080', fontWeight: isSel ? 700 : 400 }}>
+              <span className="font-sans mt-0.5" style={{ fontSize: '9px', color: isSel ? '#F4F5FA' : '#6E7080', fontWeight: isSel ? 700 : 400,
+                opacity: grown ? 1 : 0, transition: 'opacity .3s ease', transitionDelay: animateIn ? `${i * 70 + 120}ms` : '0ms' }}>
                 {future ? '–' : `${vals[i]}/${dailyMax}`}
               </span>
             </div>
@@ -1489,6 +1505,7 @@ function ParentAthletes({ userId, wide }) {
   const [bonusProofs, setBonusProofs] = useState({});
   const [notes, setNotes] = useState({});
   const [loading, setLoading] = useState(true);
+  const [reveal, setReveal] = useState(false);
   const weekStart = weekDates()[0];
   const active = useActiveChallenge();
 
@@ -1522,6 +1539,14 @@ function ParentAthletes({ userId, wide }) {
     setLoading(false);
   };
   useEffect(() => { if (active) load(); }, [active]);
+  useEffect(() => {
+    if (!loading && active && active.challenge && REVEAL_SESSION !== REVEAL_SHOWN) {
+      REVEAL_SHOWN = REVEAL_SESSION;
+      setReveal(true);
+      const t = setTimeout(() => setReveal(false), 4000);
+      return () => clearTimeout(t);
+    }
+  }, [loading]);
 
   const saveNote = async (kid, text, boardRow) => {
     await supabase.from('weekly_reports').upsert({
@@ -1538,9 +1563,11 @@ function ParentAthletes({ userId, wide }) {
   if (!active.challenge) return <ChallengeBreak isParent />;
   const renderCard = (row) => {
     const kid = kids.find(k => k.id === row.kid_id) || { id: row.kid_id, full_name: row.full_name, hero_color: row.hero_color };
+    const gi = board.indexOf(row);
     return <ParentAthleteCard key={row.kid_id} kid={kid} board={row} weekPts={weekPts[row.kid_id] || {}}
       bonuses={bonuses.filter(b => b.kid_id === row.kid_id)} bonusProofs={bonusProofs}
       note={notes[row.kid_id] || ''} userId={userId} tasks={active.tasks} tiers={active.tiers}
+      revealDelay={reveal ? gi * 650 : null}
       onSaveNote={(text) => saveNote(kid, text, row)} onChanged={load} />;
   };
   let body;
@@ -1580,7 +1607,7 @@ function ChallengeBreak({ isParent }) {
   );
 }
 
-function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, userId, onSaveNote, onChanged, tasks = [], tiers }) {
+function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, userId, onSaveNote, onChanged, tasks = [], tiers, revealDelay = null }) {
   const [selDay, setSelDay] = useState(null);
   const [draft, setDraft] = useState(note || '');
   const [saving, setSaving] = useState(false);
@@ -1598,6 +1625,17 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
   const powerTotal = weekEarned.reduce((s, b) => s + Number(b.amount), 0);
   const grand = allowance + champBonus + powerTotal;
 
+  const animating = revealDelay != null;
+  const [prog, setProg] = useState(animating ? 0 : 1);
+  useEffect(() => {
+    if (!animating) { setProg(1); return; }
+    let raf, t0;
+    const tick = (ts) => { if (!t0) t0 = ts; const p = Math.min(1, (ts - t0) / 700); setProg(p); if (p < 1) raf = requestAnimationFrame(tick); };
+    const to = setTimeout(() => { raf = requestAnimationFrame(tick); }, revealDelay);
+    return () => { clearTimeout(to); if (raf) cancelAnimationFrame(raf); };
+  }, [revealDelay]);
+  const shownGrand = Math.round(grand * prog);
+
   const save = async () => { setSaving(true); await onSaveNote(draft); setSaving(false); };
 
   return (
@@ -1612,9 +1650,9 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
       </div>
 
       <div className="flex items-center gap-3 mb-3 bg-raised rounded-xl p-3">
-        <MoneyBag amount={grand} max={Math.max(70, grand)} color={kid.hero_color} />
+        <MoneyBag amount={shownGrand} max={Math.max(70, grand)} color={kid.hero_color} />
         <div className="flex-1">
-          <p className="font-display text-3xl leading-none" style={{ color: kid.hero_color }}>${grand}</p>
+          <p className="font-display text-3xl leading-none" style={{ color: kid.hero_color }}>${shownGrand}</p>
           <p className="font-sans text-muted" style={{ fontSize: '11px' }}>allowance ${allowance}{champBonus ? ` · champ +$${champBonus}` : ''}{powerTotal ? ` · power-ups +$${powerTotal}` : ''}</p>
         </div>
         <div className="text-right">
@@ -1623,7 +1661,7 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
         </div>
       </div>
 
-      <WeekStrip points={weekPts} color={kid.hero_color} dailyMax={dailyMax} tiers={tiers} onSelectDay={(d) => setSelDay(s => s === d ? null : d)} selectedDate={selDay} />
+      <WeekStrip points={weekPts} color={kid.hero_color} dailyMax={dailyMax} tiers={tiers} animateIn={animating} startDelay={revealDelay || 0} onSelectDay={(d) => setSelDay(s => s === d ? null : d)} selectedDate={selDay} />
       <p className="font-sans text-muted mt-1.5" style={{ fontSize: '10px' }}>{selDay ? 'Tap the day again to close.' : 'Tap a day to review and approve its check-in.'}</p>
 
       {selDay && <DayPanel kidId={kid.id} date={selDay} hero_color={kid.hero_color} role="parent" userId={userId} onChanged={onChanged} tasks={tasks} />}
