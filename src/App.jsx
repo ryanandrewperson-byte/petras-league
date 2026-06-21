@@ -433,6 +433,41 @@ function useAutoUpdate() {
   return updating;
 }
 
+/* ---------- Dev session read-only guard ----------
+   When the logged-in account is a dev, every write silently no-ops so clicking around
+   (and using view-as) can't mutate real family data. Reads pass through; a refresh
+   reverts any optimistic UI. Installed once, at startup. */
+let __devGuardInstalled = false;
+function installDevReadOnly() {
+  if (__devGuardInstalled) return;
+  __devGuardInstalled = true;
+  const noopResult = { data: null, error: null };
+  const makeNoop = () => {
+    const proxy = new Proxy(function () {}, {
+      get(_t, prop) {
+        if (prop === 'then') return (resolve) => resolve(noopResult);
+        if (prop === 'catch') return () => proxy;
+        if (prop === 'finally') return (cb) => { try { cb && cb(); } catch {} return proxy; };
+        return () => proxy;            // any chained method returns the same no-op builder
+      },
+      apply() { return proxy; },
+    });
+    return proxy;
+  };
+  const origFrom = supabase.from.bind(supabase);
+  supabase.from = (table) => {
+    const qb = origFrom(table);
+    ['insert', 'update', 'delete', 'upsert'].forEach((m) => { qb[m] = () => makeNoop(); });
+    return qb;                          // select + the read chain stay live
+  };
+  const origStorageFrom = supabase.storage.from.bind(supabase.storage);
+  supabase.storage.from = (bucket) => {
+    const s = origStorageFrom(bucket);
+    ['upload', 'remove', 'update'].forEach((m) => { if (s[m]) s[m] = async () => noopResult; });
+    return s;                          // createSignedUrl / getPublicUrl / download stay live
+  };
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -468,6 +503,7 @@ export default function App() {
   }, [session]);
 
   const isDev = !!session && DEV_EMAILS.includes((session.user.email || '').toLowerCase());
+  useEffect(() => { if (isDev) installDevReadOnly(); }, [isDev]);
   useEffect(() => {
     if (!isDev) { setMembers([]); return; }
     let active = true;
@@ -1159,9 +1195,29 @@ function ProfileTile({ value, label, color }) {
   );
 }
 
+function RankToast({ info, color, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 3500); return () => clearTimeout(t); }, [onDone]);
+  const col = info.up ? color : '#FF7A1A';
+  return (
+    <div className="fixed left-1/2 z-[80] top-4" style={{ transform: 'translateX(-50%)', animation: 'rankToast .4s ease both' }} onClick={onDone}>
+      <style>{`@keyframes rankToast{0%{transform:translate(-50%,-22px);opacity:0}100%{transform:translate(-50%,0);opacity:1}}`}</style>
+      <div className="flex items-center gap-3 bg-panel rounded-2xl px-4 py-3" style={{ border: `1.5px solid ${col}`, boxShadow: `0 0 0 4px ${col}1a, 0 16px 40px -16px ${col}` }}>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${col}29` }}>
+          {info.up ? <TrendingUp size={18} style={{ color: col }} /> : <ChevronDown size={18} style={{ color: col }} />}
+        </div>
+        <div>
+          <p className="font-display text-lg tracking-wide leading-none" style={{ color: col }}>{info.up ? `You climbed to #${info.rank}!` : `Now at #${info.rank}`}</p>
+          <p className="font-sans text-muted text-xs mt-1">{info.up ? 'Keep it rolling.' : 'Get back after it.'}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ProfilePage({ userId, accent, isOwn = true }) {
   const [data, setData] = useState(null);
-  const [stats, setStats] = useState({ rank: null, points: null, streak: 0 });
+  const [stats, setStats] = useState({ rank: null, points: null, streak: 0, rival: null });
+  const [toast, setToast] = useState(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveErr, setSaveErr] = useState('');
@@ -1183,10 +1239,25 @@ function ProfilePage({ userId, accent, isOwn = true }) {
     seedForm(p);
     if (p.role === 'kid') {
       const { data: sm } = await supabase.rpc('get_summer_standings');
-      const row = (sm || []).find((r) => r.kid_id === userId);
+      const list = (sm || []).slice().sort((a, b) => (a.rank || 99) - (b.rank || 99));
+      const row = list.find((r) => r.kid_id === userId);
+      const myRank = row?.rank ?? null;
+      const myPts = row?.total_points ?? null;
+      let rival = null;
+      if (myRank && myRank > 1) {
+        const ahead = list.find((r) => r.rank === myRank - 1);
+        if (ahead) rival = { name: ahead.codename || ahead.full_name, color: ahead.hero_color || accent, gap: Math.max(0, (ahead.total_points || 0) - (myPts || 0)) };
+      }
       const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
       const { data: sdes } = await supabase.from('daily_entries').select('entry_date').eq('kid_id', userId).gte('entry_date', since);
-      setStats({ rank: row?.rank ?? null, points: row?.total_points ?? null, streak: streakFromDates(new Set((sdes || []).map((e) => e.entry_date))) });
+      setStats({ rank: myRank, points: myPts, streak: streakFromDates(new Set((sdes || []).map((e) => e.entry_date))), rival });
+      if (isOwn && myRank) {
+        const key = `pl_lastrank_${userId}`;
+        let last = null;
+        try { last = Number(localStorage.getItem(key)) || null; } catch {}
+        if (last && last !== myRank) setToast({ up: myRank < last, rank: myRank });
+        try { localStorage.setItem(key, String(myRank)); } catch {}
+      }
     }
   };
   useEffect(() => { load(); }, [userId]);
@@ -1268,6 +1339,26 @@ function ProfilePage({ userId, accent, isOwn = true }) {
         </div>
       </div>
 
+      {!editing && isKid && stats.rank && (
+        stats.rank === 1
+          ? <div className="rounded-2xl p-4 flex items-center gap-3" style={{ background: `${c}14`, border: `1px solid ${c}55` }}>
+              <Crown size={22} style={{ color: '#FFC23C' }} />
+              <div><p className="font-display text-lg tracking-wide text-ghost leading-none">League leader</p><p className="font-sans text-muted text-xs mt-1">Hold the throne — keep checking in.</p></div>
+            </div>
+          : stats.rival
+            ? <div className="rounded-2xl overflow-hidden bg-panel border border-white/10">
+                <div className="px-4 pt-3 pb-2 flex items-center justify-between">
+                  <span className="font-sans text-xs uppercase tracking-wider text-muted">Next rank · #{stats.rank - 1}</span>
+                  <span className="font-display text-lg tracking-wide" style={{ color: c }}>{stats.rival.gap} pts to go</span>
+                </div>
+                <div className="px-4 pb-3 flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-ink text-base shrink-0" style={{ background: stats.rival.color }}>{stats.rival.name[0]}</div>
+                  <p className="font-sans text-sm text-ghost flex-1">Chasing <b className="font-display tracking-wide" style={{ color: stats.rival.color }}>{stats.rival.name}</b></p>
+                </div>
+              </div>
+            : null
+      )}
+
       {editing ? (
         <div className="space-y-4">
           <ProfileField label="Codename"><input value={f.codename} onChange={(e) => setF({ ...f, codename: e.target.value })} className={PROFILE_INP} placeholder="Your hero name" /></ProfileField>
@@ -1330,6 +1421,7 @@ function ProfilePage({ userId, accent, isOwn = true }) {
           )}
         </>
       )}
+      {toast && <RankToast info={toast} color={c} onDone={() => setToast(null)} />}
     </div>
   );
 }
