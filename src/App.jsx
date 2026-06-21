@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles, User, Camera, Cake, Star, Medal } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles, User, Camera, Cake, Star, Medal, Megaphone, Send } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -507,6 +507,7 @@ export default function App() {
 const HUB_PAGES = [
   { id: 'challenge', label: 'The Challenge', sub: 'Daily check-ins & league', Icon: Trophy },
   { id: 'profile', label: 'Profile', sub: 'Your hero card', Icon: User },
+  { id: 'wins', label: 'Wins', sub: 'Family wins & shoutouts', Icon: Megaphone },
   { id: 'whatsnew', label: "What's New", sub: 'Latest feature updates', Icon: Sparkles },
   { id: 'settings', label: 'Settings', sub: 'Preferences & accents', Icon: Settings },
 ];
@@ -698,6 +699,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
+    { title: 'Wins feed', blurb: 'Open the menu \u2192 Wins to see the whole family\u2019s badges, power-ups, and streaks roll in. Tap a reaction to cheer, and post a shoutout anytime.' },
     { title: 'Badges', blurb: 'Earn medallions for streaks, perfect days, power-ups, and more. Check your shelf on your Profile and tap \u201CSee all\u201D for the full set \u2014 they pop when you unlock one.' },
     { title: 'Profiles are here', blurb: 'Open the menu \u2192 Profile to set your photo, codename, hero color, goals, and birthday. Everyone in the family can see each other\u2019s hero card.' },
     { title: 'USA Summer look', blurb: 'The League is repping the USA all tournament long \u2014 a red/white/blue stripe across the nav and a star for whoever\u2019s #1. It dials up around the 4th of July, and you can switch it off anytime in Settings.' },
@@ -922,6 +924,215 @@ function Badges({ userId, accent, isOwn = false }) {
       </div>
       {gallery && <BadgeGallery earned={earned} stats={stats || {}} accent={accent} onClose={() => setGallery(false)} />}
       {isOwn && pop.length > 0 && <BadgeUnlock badge={pop[0]} onDone={() => setPop((q) => q.slice(1))} />}
+    </div>
+  );
+}
+
+/* ---------- Wins feed (Phase 2) ---------- */
+const REACTIONS = ['🔥', '👏', '💪', '❤️', '👑'];
+
+function FeedProof({ path }) {
+  const [url, setUrl] = useState(null);
+  useEffect(() => {
+    let a = true;
+    (async () => {
+      const { data } = await supabase.storage.from('proofs').createSignedUrl(path, 300);
+      if (a && data?.signedUrl) setUrl(data.signedUrl);
+    })();
+    return () => { a = false; };
+  }, [path]);
+  if (!url) return <div className="mx-3 mb-3 h-36 rounded-xl bg-raised animate-pulse" />;
+  return <img src={url} alt="proof" className="mx-3 mb-3 rounded-xl max-h-60 object-cover" style={{ width: 'calc(100% - 1.5rem)' }} />;
+}
+
+function ReactionBar({ targetKey, reactions, onToggle }) {
+  const r = reactions || {};
+  return (
+    <div className="flex items-center gap-1.5 px-3 pb-3 flex-wrap">
+      {REACTIONS.map((em) => {
+        const info = r[em];
+        const count = info?.count || 0;
+        const mine = info?.mine;
+        return (
+          <button key={em} onClick={() => onToggle(targetKey, em, !!mine)}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-sm border transition-colors"
+            style={{ background: mine ? 'rgba(41,224,255,.14)' : '#20212B', borderColor: mine ? 'rgba(41,224,255,.4)' : 'rgba(255,255,255,.07)' }}>
+            <span>{em}</span>{count > 0 && <span className="font-sans font-bold text-muted" style={{ fontSize: '10px' }}>{count}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FeedCard({ item, reactions, onToggle }) {
+  const shout = item.type === 'shoutout';
+  return (
+    <div className="border rounded-2xl overflow-hidden"
+      style={{ borderColor: shout ? 'rgba(255,194,60,.4)' : 'rgba(255,255,255,.07)', background: shout ? 'linear-gradient(160deg, rgba(255,194,60,.08), #15151C)' : '#15151C' }}>
+      <div className="flex gap-2.5 p-3 pb-2.5">
+        <div className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-ink text-base shrink-0 overflow-hidden" style={{ background: item.color }}>
+          {item.avatar ? <img src={item.avatar} alt="" className="w-full h-full object-cover" /> : item.initial}
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="font-sans text-sm text-ghost leading-snug">{item.line}</p>
+          <p className="font-sans mt-0.5" style={{ fontSize: '10px', color: '#6E7080' }}>{item.sub}</p>
+        </div>
+        {item.icon && <div className="shrink-0 flex items-center">{item.icon}</div>}
+      </div>
+      {item.proofPath && <FeedProof path={item.proofPath} />}
+      <ReactionBar targetKey={item.key} reactions={reactions[item.key]} onToggle={onToggle} />
+    </div>
+  );
+}
+
+// Derive badge-earned events (with the date each was crossed) from a kid's check-in dates.
+function badgeEventsFromDates(dates) {
+  const sorted = [...new Set(dates)].sort();
+  const ev = [];
+  if (sorted.length) ev.push({ id: 'first', date: sorted[0] });
+  let run = 0, prev = null;
+  const hit = {};
+  for (const ds of sorted) {
+    const d = new Date(ds + 'T00:00:00');
+    run = prev && (d - prev) === 86400000 ? run + 1 : 1;
+    [3, 7, 14, 30].forEach((n) => { if (run >= n && !hit[n]) { hit[n] = true; ev.push({ id: `streak${n}`, date: ds }); } });
+    prev = d;
+  }
+  if (sorted.length >= 50) ev.push({ id: 'iron', date: sorted[49] });
+  return ev;
+}
+
+function WinsPage({ userId, accent }) {
+  const active = useActiveChallenge();
+  const [meId, setMeId] = useState(null);
+  const [items, setItems] = useState(null);
+  const [reactions, setReactions] = useState({});
+  const [draft, setDraft] = useState('');
+  const [posting, setPosting] = useState(false);
+
+  useEffect(() => { supabase.auth.getUser().then(({ data }) => setMeId(data.user?.id || null)); }, []);
+
+  const loadReactions = async (myId) => {
+    const { data } = await supabase.from('reactions').select('target_key, emoji, user_id');
+    const map = {};
+    (data || []).forEach((r) => {
+      map[r.target_key] = map[r.target_key] || {};
+      const slot = map[r.target_key][r.emoji] || { count: 0, mine: false };
+      slot.count += 1;
+      if (r.user_id === myId) slot.mine = true;
+      map[r.target_key][r.emoji] = slot;
+    });
+    setReactions(map);
+  };
+
+  const build = async () => {
+    const { data: profs } = await supabase.from('profiles').select('id, full_name, codename, hero_color, avatar_url, role');
+    const pById = {}; (profs || []).forEach((p) => { pById[p.id] = p; });
+    const nameOf = (p) => (p?.codename || p?.full_name || '?');
+    const out = [];
+
+    // Shoutouts
+    const { data: shouts } = await supabase.from('shoutouts').select('id, author_id, body, created_at');
+    (shouts || []).forEach((s) => {
+      const a = pById[s.author_id];
+      out.push({
+        key: `shoutout:${s.id}`, type: 'shoutout', ts: new Date(s.created_at),
+        color: a?.hero_color || '#FFC23C', initial: nameOf(a)[0], avatar: a?.avatar_url,
+        line: <span>{s.body} {a && <>— <b className="font-display tracking-wide">{nameOf(a)}</b></>}</span>,
+        sub: 'Shoutout',
+        icon: <Megaphone size={20} style={{ color: '#FFC23C' }} />,
+      });
+    });
+
+    // Power-ups (verified/paid) with proof photos
+    const { data: bs } = await supabase.from('bonuses').select('id, kid_id, label, amount, status, verified_at').in('status', ['verified', 'paid']).not('verified_at', 'is', null);
+    const { data: prs } = await supabase.from('proofs').select('ref_id, storage_path').eq('ref_type', 'bonus');
+    const proofBy = {}; (prs || []).forEach((p) => { proofBy[p.ref_id] = p.storage_path; });
+    (bs || []).forEach((b) => {
+      const k = pById[b.kid_id]; if (!k) return;
+      out.push({
+        key: `powerup:${b.id}`, type: 'powerup', ts: new Date(b.verified_at),
+        color: k.hero_color, initial: nameOf(k)[0], avatar: k.avatar_url,
+        line: <span><b className="font-display tracking-wide">{nameOf(k)}</b> earned a power-up: <b style={{ color: k.hero_color }}>{b.label}</b></span>,
+        sub: `+$${b.amount}`,
+        icon: <Zap size={20} style={{ color: '#FF4D6D' }} />,
+        proofPath: proofBy[b.id] || null,
+      });
+    });
+
+    // Badge unlocks (derived with dates)
+    let eq = supabase.from('daily_entries').select('kid_id, entry_date');
+    if (active?.challenge) eq = eq.eq('challenge_id', active.challenge.id);
+    const { data: ents } = await eq;
+    const datesByKid = {};
+    (ents || []).forEach((e) => { (datesByKid[e.kid_id] = datesByKid[e.kid_id] || []).push(e.entry_date); });
+    Object.entries(datesByKid).forEach(([kid, dates]) => {
+      const k = pById[kid]; if (!k || k.role !== 'kid') return;
+      badgeEventsFromDates(dates).forEach((evt) => {
+        const badge = BADGES.find((b) => b.id === evt.id); if (!badge) return;
+        out.push({
+          key: `badge:${kid}:${evt.id}`, type: 'badge', ts: new Date(evt.date + 'T12:00:00'),
+          color: k.hero_color, initial: nameOf(k)[0], avatar: k.avatar_url,
+          line: <span><b className="font-display tracking-wide">{nameOf(k)}</b> earned the <b style={{ color: badge.color }}>{badge.name}</b> badge</span>,
+          sub: badge.crit,
+          icon: <HexBadge Icon={badge.Icon} color={badge.color} size={34} />,
+        });
+      });
+    });
+
+    out.sort((a, b) => b.ts - a.ts);
+    setItems(out);
+  };
+
+  useEffect(() => { if (active) build(); }, [active]);
+  useEffect(() => { if (meId) loadReactions(meId); }, [meId]);
+
+  const onToggle = async (key, emoji, mine) => {
+    if (!meId) return;
+    setReactions((prev) => {
+      const next = { ...prev, [key]: { ...(prev[key] || {}) } };
+      const cur = next[key][emoji] || { count: 0, mine: false };
+      next[key][emoji] = { count: Math.max(0, cur.count + (mine ? -1 : 1)), mine: !mine };
+      return next;
+    });
+    if (mine) await supabase.from('reactions').delete().eq('target_key', key).eq('user_id', meId).eq('emoji', emoji);
+    else await supabase.from('reactions').insert({ target_key: key, user_id: meId, emoji });
+  };
+
+  const post = async () => {
+    const body = draft.trim();
+    if (!body || !meId) return;
+    setPosting(true);
+    const { error } = await supabase.from('shoutouts').insert({ author_id: meId, body });
+    setPosting(false);
+    if (!error) { setDraft(''); build(); }
+  };
+
+  return (
+    <div>
+      <h2 className="font-display text-3xl tracking-wide text-ghost mb-1">Wins</h2>
+      <p className="font-sans text-muted text-sm mb-4">Cheer each other on.</p>
+
+      {/* Shoutout composer */}
+      <div className="flex items-center gap-2 mb-5 p-2 rounded-2xl bg-panel border border-white/10">
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') post(); }}
+          placeholder="Share a shoutout with the family…"
+          className="flex-1 bg-transparent px-2 py-1.5 font-sans text-sm text-ghost outline-none" />
+        <button onClick={post} disabled={posting || !draft.trim()} aria-label="Post shoutout"
+          className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 disabled:opacity-40"
+          style={{ background: draft.trim() ? accent : '#20212B' }}>
+          <Send size={16} style={{ color: draft.trim() ? '#0B0B0F' : '#9A9CB0' }} />
+        </button>
+      </div>
+
+      {items === null
+        ? <p className="font-sans text-muted text-sm">Loading the feed…</p>
+        : items.length === 0
+          ? <p className="font-sans text-muted text-sm">No wins yet — check in, earn badges, and they'll show up here.</p>
+          : <div className="flex flex-col gap-3">
+              {items.map((item) => <FeedCard key={item.key} item={item} reactions={reactions} onToggle={onToggle} />)}
+            </div>}
     </div>
   );
 }
@@ -1266,6 +1477,8 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                 ? <SettingsPage accent={accent} profile={profile} isParent={isParent} />
                 : page === 'profile'
                   ? <ProfilePage userId={userId} accent={accent} isOwn />
+                : page === 'wins'
+                  ? <WinsPage userId={userId} accent={accent} />
                 : page === 'whatsnew'
                   ? <WhatsNewPage accent={accent} />
                   : <>
