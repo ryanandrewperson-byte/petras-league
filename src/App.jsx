@@ -1831,10 +1831,12 @@ function TabBar({ isParent, tab, setTab, color, attn = { payouts: 0 }, season, p
       style={{ boxShadow: '0 -10px 30px -16px rgba(0,0,0,0.9)', paddingBottom: 'env(safe-area-inset-bottom)',
         transform: pushX ? `translateX(${pushX})` : 'translateX(0)', transition: 'transform .3s ease' }}>
       {season?.hairline && (
-        <div className="absolute top-0 inset-x-0 flex" style={{ height: 3 }} aria-hidden="true">
-          <div className="flex-1" style={{ background: season.palette.red }} />
-          <div className="flex-1" style={{ background: season.palette.white }} />
-          <div className="flex-1" style={{ background: season.palette.blue }} />
+        <div className="max-w-md mx-auto px-3 pt-2" aria-hidden="true">
+          <div className="flex rounded-[3px] overflow-hidden" style={{ height: 7, boxShadow: '0 1px 0 rgba(0,0,0,.4)' }}>
+            <div className="flex-1" style={{ background: season.palette.red }} />
+            <div className="flex-1" style={{ background: season.palette.white }} />
+            <div className="flex-1" style={{ background: season.palette.blue }} />
+          </div>
         </div>
       )}
       <div className="max-w-md mx-auto flex items-stretch px-2 pt-1.5 pb-1">
@@ -3722,6 +3724,13 @@ function TopBar({ name, sub, color, onOpenNav, notify, onOpenProfile, onOpenGuid
         {onOpenGuide && <button onClick={onOpenGuide} className="text-muted hover:text-ghost p-2 shrink-0" aria-label="How it works"><HelpCircle size={18} /></button>}
         <button onClick={() => supabase.auth.signOut()} className="text-muted hover:text-ghost p-2 shrink-0"><LogOut size={18} /></button>
       </div>
+      {season?.hairline && (
+        <div className="-mt-4 mb-5 flex rounded-[3px] overflow-hidden" style={{ height: 7, boxShadow: '0 1px 0 rgba(0,0,0,.4)' }} aria-hidden="true">
+          <div className="flex-1" style={{ background: season.palette.red }} />
+          <div className="flex-1" style={{ background: season.palette.white }} />
+          <div className="flex-1" style={{ background: season.palette.blue }} />
+        </div>
+      )}
       {season?.bunting && <div className="-mt-5 mb-5"><Bunting palette={season.palette} /></div>}
     </>
   );
