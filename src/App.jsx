@@ -377,6 +377,62 @@ function UsageDashboard({ onClose }) {
   );
 }
 
+/* ---------- Auto-update: swap to the newest deploy without a hard refresh ---------- */
+function UpdatingScreen() {
+  return (
+    <div className="fixed inset-0 z-[100] bg-ink flex flex-col items-center justify-center gap-4"
+      style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      <div className="w-10 h-10 rounded-full animate-spin"
+        style={{ border: '3px solid rgba(61,232,192,.22)', borderTopColor: '#3DE8C0' }} />
+      <p className="font-display text-2xl tracking-wide text-ghost">Updating app</p>
+      <p className="font-sans text-muted text-xs -mt-2">Loading the latest version…</p>
+      <p className="absolute bottom-6 font-display text-sm tracking-wide" style={{ color: '#6E7080' }}>PETRAS LEAGUE</p>
+    </div>
+  );
+}
+
+// Detects a newer Vercel build (the entry asset hash changes every deploy) and reloads into it.
+// Only swaps on app open/refocus so it never interrupts a tap mid-action; a session guard prevents loops.
+function useAutoUpdate() {
+  const [updating, setUpdating] = useState(false);
+  useEffect(() => {
+    const GUARD = 'pl_update_to';
+    const hashOf = (str) => { const m = str.match(/\/assets\/index-([\w-]+)\.js/); return m ? m[1] : null; };
+    const el = document.querySelector('script[src*="/assets/index-"]');
+    const running = el ? hashOf(el.getAttribute('src') || '') : null;
+    if (!running) return;                       // dev mode / unexpected build name -> do nothing
+    try { if (sessionStorage.getItem(GUARD) === running) sessionStorage.removeItem(GUARD); } catch {}
+
+    let alive = true, pending = null;
+    const latestHash = async () => {
+      try {
+        const r = await fetch('/index.html?v=' + Date.now(), { cache: 'no-store' });
+        return r.ok ? hashOf(await r.text()) : null;
+      } catch { return null; }
+    };
+    const reload = (target) => {
+      try { if (sessionStorage.getItem(GUARD) === target) return; sessionStorage.setItem(GUARD, target); } catch {}
+      setUpdating(true);
+      setTimeout(() => window.location.reload(), 650);
+    };
+    const check = async (canReloadNow) => {
+      const next = await latestHash();
+      if (!alive || !next || next === running) return;
+      if (canReloadNow) reload(next); else pending = next;
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      if (pending) reload(pending); else check(true);
+    };
+    check(false);                               // initial: flag only, never yank first paint
+    const id = setInterval(() => check(false), 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => { alive = false; clearInterval(id); document.removeEventListener('visibilitychange', onVisible); window.removeEventListener('focus', onVisible); };
+  }, []);
+  return updating;
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -422,6 +478,8 @@ export default function App() {
     return () => { active = false; };
   }, [isDev, session]);
 
+  const updating = useAutoUpdate();
+  if (updating) return <UpdatingScreen />;
   if (loading) return <Centered>Loading…</Centered>;
   if (!session) return <Login />;
   if (!profile) return <Centered>Loading your profile…</Centered>;
@@ -540,7 +598,7 @@ const SEASONS = [
     key: 'usa-summer-2026',
     start: '2026-06-20', end: '2026-07-19',          // World Cup window (now → final)
     palette: { red: '#E23B45', white: '#F4F5FA', blue: '#3E63E8' },
-    base: { hairline: true, ballTab: true, nameStar: true },
+    base: { hairline: true, nameStar: true },
     peaks: [
       { start: '2026-07-01', end: '2026-07-06', add: { bunting: true, cornerFlag: true } }, // 250th + Round of 16
     ],
@@ -567,15 +625,6 @@ function USAStar({ size = 13, color = '#E23B45' }) {
   return (
     <svg viewBox="0 0 20 20" width={size} height={size} className="shrink-0" aria-hidden="true">
       <polygon points="10,1 12.4,7.2 19,7.2 13.7,11.2 15.8,17.6 10,13.6 4.2,17.6 6.3,11.2 1,7.2 7.6,7.2" fill={color} />
-    </svg>
-  );
-}
-// Soccer ball badge for the active nav tab.
-function SoccerBall({ size = 13 }) {
-  return (
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
-      <circle cx="12" cy="12" r="11" fill="#F4F5FA" stroke="#0B0B0F" strokeWidth="1.4" />
-      <polygon points="12,6 16,9 14.5,14 9.5,14 8,9" fill="#0B0B0F" />
     </svg>
   );
 }
@@ -648,7 +697,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
-    { title: 'USA Summer look', blurb: 'The League is repping the USA all tournament long \u2014 a red/white/blue stripe on the nav, a soccer ball on your active tab, and a star for whoever\u2019s #1. It dials up around the 4th of July, and you can switch it off anytime in Settings.' },
+    { title: 'USA Summer look', blurb: 'The League is repping the USA all tournament long \u2014 a red/white/blue stripe across the nav and a star for whoever\u2019s #1. It dials up around the 4th of July, and you can switch it off anytime in Settings.' },
     { title: 'Family Hub menu', blurb: 'Tap the menu in the top-left to jump between the Challenge, What\u2019s New, and Settings.' },
   ]},
   { date: 'June 20, 2026', items: [
@@ -1062,9 +1111,6 @@ function TabBar({ isParent, tab, setTab, color, attn = { payouts: 0 }, season, p
                 }}>
                 <Icon size={active ? 21 : 20} strokeWidth={active ? 2.6 : 2}
                   color={active ? '#0B0B0F' : '#9A9CB0'} />
-                {active && season?.ballTab && (
-                  <span className="absolute -top-1.5 -left-1.5" aria-hidden="true"><SoccerBall size={13} /></span>
-                )}
                 {badge > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center"
                     style={{ background: '#FF3D7F', color: '#0B0B0F', fontSize: '10px', fontWeight: 700 }} aria-label={`${badge} need attention`}>
