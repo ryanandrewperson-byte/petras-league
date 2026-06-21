@@ -492,24 +492,130 @@ function HubNav({ open, onClose, page, setPage, accent }) {
   );
 }
 
-/* ---------- Placeholder hub pages (built out in later chunks) ---------- */
-function ComingSoon({ Icon, title, blurb, accent }) {
+/* ---------- Settings page ---------- */
+function SettingsSection({ title, children }) {
   return (
-    <div className="flex flex-col items-center text-center py-16">
-      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5" style={{ background: '#20212B', border: `1px solid ${accent}55` }}>
-        <Icon size={30} color={accent} />
-      </div>
-      <h2 className="font-display text-3xl tracking-wide text-ghost">{title}</h2>
-      <p className="font-sans text-muted text-sm mt-2 max-w-xs">{blurb}</p>
-      <span className="mt-5 px-3 py-1 rounded-full font-sans text-xs font-bold" style={{ background: `${accent}22`, color: accent }}>Coming soon</span>
+    <div>
+      <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">{title}</p>
+      <div className="bg-panel rounded-2xl divide-y divide-white/5 overflow-hidden">{children}</div>
     </div>
   );
 }
-function SettingsPage({ accent }) {
-  return <ComingSoon Icon={Settings} title="Settings" blurb="Preferences, notifications, and seasonal accents will live here. Building this next." accent={accent} />;
+function ToggleRow({ title, sub, on, onToggle, accent }) {
+  return (
+    <div className="flex items-center gap-3 p-4">
+      <div className="flex-1 min-w-0">
+        <p className="font-sans text-ghost text-sm font-semibold">{title}</p>
+        {sub && <p className="font-sans text-muted text-xs mt-0.5 leading-snug">{sub}</p>}
+      </div>
+      <button onClick={onToggle} role="switch" aria-checked={on} aria-label={title}
+        className="relative shrink-0 rounded-full transition-colors duration-200"
+        style={{ width: 46, height: 28, background: on ? accent : '#3A3B47' }}>
+        <span className="absolute top-1 rounded-full bg-white transition-all duration-200"
+          style={{ width: 20, height: 20, left: on ? 22 : 4 }} />
+      </button>
+    </div>
+  );
 }
+function InfoRow({ label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-3 p-4">
+      <span className="font-sans text-muted text-sm shrink-0">{label}</span>
+      <span className="font-sans text-ghost text-sm font-semibold text-right truncate">{value}</span>
+    </div>
+  );
+}
+
+// Seasonal-accents preference (per-device). The July 4th accent engine reads this same key.
+const SEASONAL_KEY = 'petras_seasonal_accents';
+function getSeasonalOn() {
+  try { return localStorage.getItem(SEASONAL_KEY) !== 'off'; } catch { return true; }
+}
+
+function SettingsPage({ accent, profile, isParent }) {
+  const [seasonal, setSeasonal] = useState(getSeasonalOn);
+  const toggleSeasonal = () => {
+    setSeasonal((v) => {
+      const nv = !v;
+      try { localStorage.setItem(SEASONAL_KEY, nv ? 'on' : 'off'); } catch {}
+      return nv;
+    });
+  };
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="font-display text-3xl tracking-wide text-ghost">Settings</h2>
+        <p className="font-sans text-muted text-sm mt-1">Preferences for your Petras League experience.</p>
+      </div>
+
+      <SettingsSection title="Appearance">
+        <ToggleRow title="Seasonal accents"
+          sub="Subtle holiday flair around the app (July 4th, Halloween, and more)."
+          on={seasonal} onToggle={toggleSeasonal} accent={accent} />
+      </SettingsSection>
+
+      <SettingsSection title="Account">
+        <InfoRow label="Name" value={profile.full_name} />
+        <InfoRow label="Role" value={isParent ? 'Commander' : (profile.codename || 'Athlete')} />
+        <button onClick={() => supabase.auth.signOut()} className="w-full flex items-center gap-2 p-4 text-left hover:bg-white/5 transition-colors">
+          <LogOut size={16} className="text-magenta shrink-0" />
+          <span className="font-sans text-magenta text-sm font-semibold">Sign out</span>
+        </button>
+      </SettingsSection>
+
+      <SettingsSection title="About">
+        <InfoRow label="App" value="Petras League" />
+        <InfoRow label="Season" value="Summer 2026" />
+      </SettingsSection>
+    </div>
+  );
+}
+
+/* ---------- What's New (public changelog) ---------- */
+// Newest first. User-facing features only — keep architecture/scale notes off this list.
+const WHATS_NEW = [
+  { date: 'June 21, 2026', items: [
+    { title: 'Family Hub menu', blurb: 'Tap the menu in the top-left to jump between the Challenge, What\u2019s New, and Settings.' },
+  ]},
+  { date: 'June 20, 2026', items: [
+    { title: 'Champion crown & streak flames', blurb: 'The week\u2019s leader now wears a crown, and check-in streaks light up with flames that grow hotter the longer you keep it going.' },
+    { title: 'Pull to refresh', blurb: 'Pull down from the top of any screen to grab your latest points and standings.' },
+    { title: 'Freshness check', blurb: 'An \u201CUpdated just now\u201D line tells you how current the screen is, and nudges you to refresh when it\u2019s gone stale.' },
+  ]},
+  { date: 'June 2026', items: [
+    { title: 'Season launch', blurb: 'Petras League went live for the Summer 2026 season. Welcome, athletes and commanders!' },
+  ]},
+];
+
 function WhatsNewPage({ accent }) {
-  return <ComingSoon Icon={Sparkles} title="What's New" blurb="A running log of every new feature as it ships. Building this next." accent={accent} />;
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="font-display text-3xl tracking-wide text-ghost">What's New</h2>
+        <p className="font-sans text-muted text-sm mt-1">Every upgrade to the League, newest first.</p>
+      </div>
+      {WHATS_NEW.map((group, gi) => (
+        <div key={gi}>
+          <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">{group.date}</p>
+          <div className="space-y-2">
+            {group.items.map((it, ii) => (
+              <div key={ii} className="bg-panel rounded-2xl p-4" style={{ borderLeft: `3px solid ${accent}` }}>
+                <div className="flex items-start gap-3">
+                  <span className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5" style={{ background: `${accent}22` }}>
+                    <Sparkles size={16} color={accent} />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-display text-lg tracking-wide text-ghost leading-tight">{it.title}</p>
+                    <p className="font-sans text-muted text-sm mt-1 leading-snug">{it.blurb}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Shell({ profile, userId, tab, setTab, devOffset }) {
@@ -649,7 +755,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                 onOpenProfile={() => setShowProfile(true)}
                 onOpenGuide={page === 'challenge' ? () => setShowGuide(true) : undefined} />
               {page === 'settings'
-                ? <SettingsPage accent={accent} />
+                ? <SettingsPage accent={accent} profile={profile} isParent={isParent} />
                 : page === 'whatsnew'
                   ? <WhatsNewPage accent={accent} />
                   : <>
