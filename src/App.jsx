@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -445,11 +445,80 @@ export default function App() {
 }
 
 /* ---------- Shell with tabs ---------- */
+/* ---------- Family Hub nav (slide-out drawer) ---------- */
+const HUB_PAGES = [
+  { id: 'challenge', label: 'The Challenge', sub: 'Daily check-ins & league', Icon: Trophy },
+  { id: 'whatsnew', label: "What's New", sub: 'Latest feature updates', Icon: Sparkles },
+  { id: 'settings', label: 'Settings', sub: 'Preferences & accents', Icon: Settings },
+];
+const NAV_W = 'min(85vw, 300px)';
+
+function HubNav({ open, onClose, page, setPage, accent }) {
+  return (
+    <>
+      <div onClick={onClose}
+        className={`fixed inset-0 z-40 bg-black/50 transition-opacity duration-300 ${open ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} />
+      <aside
+        className="fixed left-0 top-0 z-50 h-full bg-panel border-r border-white/10 transition-transform duration-300 ease-out"
+        style={{ width: NAV_W, transform: open ? 'translateX(0)' : 'translateX(-100%)', paddingTop: 'env(safe-area-inset-top)' }}>
+        <div className="px-5 pt-6 pb-5 border-b border-white/10 flex items-start justify-between">
+          <div>
+            <p className="font-display text-2xl tracking-wide leading-none" style={{ color: accent }}>Petras</p>
+            <p className="font-display text-xl tracking-wide leading-none text-ghost mt-1">Family Hub</p>
+          </div>
+          <button onClick={onClose} className="text-muted hover:text-ghost p-1 -mr-1" aria-label="Close menu"><X size={22} /></button>
+        </div>
+        <nav className="p-3 flex flex-col gap-2">
+          {HUB_PAGES.map(({ id, label, sub, Icon }) => {
+            const active = page === id;
+            return (
+              <button key={id} onClick={() => { setPage(id); onClose(); }}
+                className="flex items-center gap-3 rounded-2xl p-3 text-left transition-colors"
+                style={{ background: active ? accent : '#20212B', border: active ? 'none' : '1px solid rgba(255,255,255,.06)' }}>
+                <span className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{ background: active ? 'rgba(0,0,0,.18)' : '#15151C' }}>
+                  <Icon size={20} color={active ? '#0B0B0F' : accent} strokeWidth={2.2} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block font-display text-lg tracking-wide leading-none" style={{ color: active ? '#0B0B0F' : '#F4F5FA' }}>{label}</span>
+                  <span className="block font-sans text-xs mt-1 leading-none" style={{ color: active ? 'rgba(0,0,0,.55)' : '#9A9CB0' }}>{sub}</span>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+    </>
+  );
+}
+
+/* ---------- Placeholder hub pages (built out in later chunks) ---------- */
+function ComingSoon({ Icon, title, blurb, accent }) {
+  return (
+    <div className="flex flex-col items-center text-center py-16">
+      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5" style={{ background: '#20212B', border: `1px solid ${accent}55` }}>
+        <Icon size={30} color={accent} />
+      </div>
+      <h2 className="font-display text-3xl tracking-wide text-ghost">{title}</h2>
+      <p className="font-sans text-muted text-sm mt-2 max-w-xs">{blurb}</p>
+      <span className="mt-5 px-3 py-1 rounded-full font-sans text-xs font-bold" style={{ background: `${accent}22`, color: accent }}>Coming soon</span>
+    </div>
+  );
+}
+function SettingsPage({ accent }) {
+  return <ComingSoon Icon={Settings} title="Settings" blurb="Preferences, notifications, and seasonal accents will live here. Building this next." accent={accent} />;
+}
+function WhatsNewPage({ accent }) {
+  return <ComingSoon Icon={Sparkles} title="What's New" blurb="A running log of every new feature as it ships. Building this next." accent={accent} />;
+}
+
 function Shell({ profile, userId, tab, setTab, devOffset }) {
   const isParent = profile.role === 'parent';
   const accent = isParent ? '#FFC23C' : profile.hero_color;
   const [showProfile, setShowProfile] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
+  const [page, setPage] = useState('challenge');
+  const [navOpen, setNavOpen] = useState(false);
 
   // ----- Pull-to-refresh (soft: remounts the current screen -> refetch) -----
   const [refreshKey, setRefreshKey] = useState(0);
@@ -542,55 +611,70 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
   }, [isParent, tab, refreshKey]);
 
   return (
-    <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-16' : ''}`}
-      onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+    <div className="relative min-h-screen overflow-x-hidden">
+      <HubNav open={navOpen} onClose={() => setNavOpen(false)} page={page} setPage={setPage} accent={accent} />
+      <div className="transition-transform duration-300 ease-out"
+        style={{ transform: navOpen ? `translateX(${NAV_W})` : 'translateX(0)' }}>
+        <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-16' : ''}`}
+          onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
 
-      {/* Pull-to-refresh spinner */}
-      <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
-        style={{ top: devOffset ? 70 : 8, opacity: pull > 4 || refreshing ? 1 : 0,
-          transform: `translateY(${pull}px)`, transition: snap }}>
-        <div className="w-9 h-9 rounded-full bg-raised flex items-center justify-center"
-          style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
-          <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''}
-            style={{ color: accent, transform: refreshing ? 'none' : `rotate(${pull * 2.4}deg)` }} />
-        </div>
-      </div>
-
-      {/* Occasional "pull to refresh" nudge — only when data is stale */}
-      <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
-        style={{ top: devOffset ? 74 : 12, opacity: nudge && pull === 0 && !refreshing ? 1 : 0, transition: 'opacity .3s ease' }}>
-        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-raised"
-          style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
-          <ChevronDown size={14} className="animate-bounce" style={{ color: accent }} />
-          <span className="font-sans" style={{ fontSize: '11px', color: accent, fontWeight: 600 }}>Pull to refresh</span>
-        </div>
-      </div>
-
-      <div style={{ transform: `translateY(${pull}px)`, transition: snap }}>
-        <div className="max-w-md mx-auto px-6 py-8">
-          <TopBar name={profile.full_name}
-            sub={isParent ? 'Commander' : `${profile.codename} · ${profile.sport}`}
-            color={accent}
-            onOpenProfile={() => setShowProfile(true)} onOpenGuide={() => setShowGuide(true)} />
-          <div className="flex items-center gap-1.5 -mt-3 mb-4" style={{ color: stale ? '#E0A53C' : '#9A9CB0' }}>
-            <RefreshCw size={12} />
-            <span className="font-sans" style={{ fontSize: '11px' }}>Updated {ageLabel}</span>
+          {/* Pull-to-refresh spinner */}
+          <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
+            style={{ top: devOffset ? 70 : 8, opacity: pull > 4 || refreshing ? 1 : 0,
+              transform: `translateY(${pull}px)`, transition: snap }}>
+            <div className="w-9 h-9 rounded-full bg-raised flex items-center justify-center"
+              style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
+              <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''}
+                style={{ color: accent, transform: refreshing ? 'none' : `rotate(${pull * 2.4}deg)` }} />
+            </div>
           </div>
-          <div key={refreshKey}>
-            {tab === 'league'
-              ? <LeaderBoard />
-              : tab === 'challenges' && isParent
-                ? <ChallengeManager userId={userId} />
-                : tab === 'bonus'
-                  ? (isParent ? <ParentPayouts userId={userId} /> : <KidPowerUps profile={profile} userId={userId} />)
-                  : (isParent ? <ParentAthletes userId={userId} /> : <KidAthletes profile={profile} userId={userId} />)}
+
+          {/* Occasional "pull to refresh" nudge — only when data is stale */}
+          <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
+            style={{ top: devOffset ? 74 : 12, opacity: nudge && pull === 0 && !refreshing && page === 'challenge' ? 1 : 0, transition: 'opacity .3s ease' }}>
+            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-raised"
+              style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
+              <ChevronDown size={14} className="animate-bounce" style={{ color: accent }} />
+              <span className="font-sans" style={{ fontSize: '11px', color: accent, fontWeight: 600 }}>Pull to refresh</span>
+            </div>
           </div>
+
+          <div style={{ transform: `translateY(${pull}px)`, transition: snap }}>
+            <div className="max-w-md mx-auto px-6 py-8">
+              <TopBar name={profile.full_name}
+                sub={isParent ? 'Commander' : `${profile.codename} · ${profile.sport}`}
+                color={accent}
+                onOpenNav={() => setNavOpen(true)}
+                onOpenProfile={() => setShowProfile(true)}
+                onOpenGuide={page === 'challenge' ? () => setShowGuide(true) : undefined} />
+              {page === 'settings'
+                ? <SettingsPage accent={accent} />
+                : page === 'whatsnew'
+                  ? <WhatsNewPage accent={accent} />
+                  : <>
+                      <div className="flex items-center gap-1.5 -mt-3 mb-4" style={{ color: stale ? '#E0A53C' : '#9A9CB0' }}>
+                        <RefreshCw size={12} />
+                        <span className="font-sans" style={{ fontSize: '11px' }}>Updated {ageLabel}</span>
+                      </div>
+                      <div key={refreshKey}>
+                        {tab === 'league'
+                          ? <LeaderBoard />
+                          : tab === 'challenges' && isParent
+                            ? <ChallengeManager userId={userId} />
+                            : tab === 'bonus'
+                              ? (isParent ? <ParentPayouts userId={userId} /> : <KidPowerUps profile={profile} userId={userId} />)
+                              : (isParent ? <ParentAthletes userId={userId} /> : <KidAthletes profile={profile} userId={userId} />)}
+                      </div>
+                    </>}
+            </div>
+          </div>
+
+          {page === 'challenge' &&
+            <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} attn={attn} />}
+          {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
+          {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
         </div>
       </div>
-
-      <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} attn={attn} />
-      {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
-      {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
     </div>
   );
 }
@@ -2410,9 +2494,15 @@ function Burst({ color = '#FFC23C', label = 'POW!' }) {
 function Centered({ children }) {
   return <div className="min-h-screen bg-ink text-ghost flex items-center justify-center px-6 font-sans">{children}</div>;
 }
-function TopBar({ name, sub, color, onOpenProfile, onOpenGuide }) {
+function TopBar({ name, sub, color, onOpenNav, onOpenProfile, onOpenGuide }) {
   return (
-    <div className="flex items-center gap-3 mb-6 pb-5 border-b border-white/10">
+    <div className="flex items-center gap-2 mb-6 pb-5 border-b border-white/10">
+      {onOpenNav && (
+        <button onClick={onOpenNav} aria-label="Open menu" className="relative text-ghost hover:text-white p-2 -ml-2 shrink-0">
+          <Menu size={22} />
+          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ background: color }} />
+        </button>
+      )}
       <button onClick={onOpenProfile} className="flex items-center gap-3 flex-1 min-w-0 text-left">
         <div className="w-12 h-12 rounded-xl flex items-center justify-center font-display text-ink text-xl shrink-0" style={{ background: color }}>{name[0]}</div>
         <div className="flex-1 min-w-0">
