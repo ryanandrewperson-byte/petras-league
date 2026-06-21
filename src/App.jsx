@@ -1214,6 +1214,7 @@ function ParentPayouts({ userId }) {
     await supabase.from('bonuses').update({
       status, verified_by: stamp ? userId : null, verified_at: stamp ? new Date().toISOString() : null,
     }).eq('id', b.id);
+    if (status === 'paid') celebrate({ word: 'CHA-CHING!', color: '#FFC23C' });
     await load();
   };
 
@@ -1446,6 +1447,7 @@ function DayPanel({ kidId, date, hero_color, role, userId, onChanged, tasks = []
     await supabase.from('daily_entries').update({
       status: next, approved_by: next === 'approved' ? userId : null, approved_at: next === 'approved' ? new Date().toISOString() : null,
     }).eq('id', entry.id);
+    if (next === 'approved') celebrate({ word: 'LOCKED IN!', color: hero_color });
     await load();
     onChanged && onChanged();
   };
