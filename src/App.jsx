@@ -23,6 +23,16 @@ function allowanceFromTiers(points, weeklyMax, tiers) {
   for (const t of tiers) if (pct >= t.min_percent) amt = Math.max(amt, t.amount);
   return amt;
 }
+// The next reward tier above the kid's current points, and how many points to reach it.
+function nextTier(points, weeklyMax, tiers) {
+  if (!weeklyMax || !tiers || !tiers.length) return null;
+  const sorted = [...tiers].sort((a, b) => a.min_percent - b.min_percent);
+  for (const t of sorted) {
+    const need = Math.ceil((t.min_percent / 100) * weeklyMax);
+    if (need > points) return { amount: t.amount, ptsNeeded: need - points };
+  }
+  return null;
+}
 // Loads the challenge whose date range contains today (the "active" one), with its tasks + reward tiers.
 function useActiveChallenge() {
   const [data, setData] = useState(null); // null = loading; { challenge, tasks, tiers }
@@ -223,12 +233,10 @@ function UsageDashboard({ onClose }) {
           (et || []).forEach(t => { if (t.completed) { const k = kidByEntry[t.entry_id]; tasksByKid[k] = (tasksByKid[k] || 0) + 1; } });
         }
 
-        // Check-in dates per kid + parent approval counts.
+        // Check-in dates per kid.
         const datesByKid = {};
-        const approvalsByParent = {};
         entries.forEach(e => {
           (datesByKid[e.kid_id] = datesByKid[e.kid_id] || new Set()).add(e.entry_date);
-          if (e.approved_by) approvalsByParent[e.approved_by] = (approvalsByParent[e.approved_by] || 0) + 1;
         });
         const streakOf = (set) => {
           if (!set || !set.size) return 0;
@@ -252,7 +260,7 @@ function UsageDashboard({ onClose }) {
             kids: profs.filter(p => p.role !== 'parent'),
             parents: profs.filter(p => p.role === 'parent'),
             totalAccounts: profs.length, everLoggedIn, active7, totalCheckins: entries.length,
-            loginById, datesByKid, tasksByKid, approvalsByParent, streakOf, days, perDay,
+            loginById, datesByKid, tasksByKid, streakOf, days, perDay,
           });
           setLoading(false);
         }
@@ -357,10 +365,6 @@ function UsageDashboard({ onClose }) {
                     <div className="min-w-0 flex-1">
                       <div className="font-display text-base text-ghost leading-none truncate">{p.full_name}</div>
                       <div className="font-sans text-[11px] text-muted mt-1">Last login {lg ? ago(lg.last_sign_in_at) : 'never'}</div>
-                    </div>
-                    <div className="text-center shrink-0">
-                      <div className="font-display text-lg text-ghost leading-none">{d.approvalsByParent[p.id] || 0}</div>
-                      <div className="font-sans text-[10px] text-muted uppercase">approvals</div>
                     </div>
                   </div>
                 );
@@ -1685,6 +1689,7 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
   const paceTodayIdx = (new Date().getDay() + 6) % 7;
   const paceProjected = Math.round((paceTotal / (paceTodayIdx + 1)) * 7);
   const pace = allowanceFromTiers(paceProjected, dailyMax * 7, tiers);
+  const nt = pace > 0 ? null : nextTier(paceTotal, dailyMax * 7, tiers);
 
   const animating = revealDelay != null;
   const [prog, setProg] = useState(animating ? 0 : 1);
@@ -1719,6 +1724,11 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
           {pace > 0 && (
             <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: kid.hero_color }}>
               <TrendingUp size={11} /> On pace for ${pace} this week
+            </p>
+          )}
+          {pace === 0 && nt && (
+            <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: kid.hero_color }}>
+              <TrendingUp size={11} /> {nt.ptsNeeded} pts to unlock ${nt.amount}
             </p>
           )}
         </div>
@@ -1837,6 +1847,7 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
   const paceTodayIdx = (new Date().getDay() + 6) % 7;
   const paceProjected = Math.round((paceTotal / (paceTodayIdx + 1)) * 7);
   const pace = allowanceFromTiers(paceProjected, dailyMax * 7, tiers);
+  const nt = pace > 0 ? null : nextTier(paceTotal, dailyMax * 7, tiers);
 
   return (
     <div className="relative bg-panel rounded-2xl p-4 mb-4" style={{ borderLeft: `4px solid ${profile.hero_color}` }}>
@@ -1861,6 +1872,11 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
           {pace > 0 && (
             <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
               <TrendingUp size={11} /> On pace for ${pace} this week
+            </p>
+          )}
+          {pace === 0 && nt && (
+            <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
+              <TrendingUp size={11} /> {nt.ptsNeeded} pts to unlock ${nt.amount}
             </p>
           )}
         </div>
