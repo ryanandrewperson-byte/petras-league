@@ -40,14 +40,14 @@ function useActiveChallenge() {
   }, []);
   return data;
 }
-// The seven dates of the current week, Sunday → Saturday (matches get_leaderboard's reset).
+// The seven dates of the current week, Monday → Sunday (matches get_leaderboard's reset).
 function weekDates() {
   const d = new Date();
-  const sunday = new Date(d);
-  sunday.setDate(d.getDate() - d.getDay());
+  const monday = new Date(d);
+  monday.setDate(d.getDate() - ((d.getDay() + 6) % 7));
   return Array.from({ length: 7 }, (_, i) => {
-    const dd = new Date(sunday);
-    dd.setDate(sunday.getDate() + i);
+    const dd = new Date(monday);
+    dd.setDate(monday.getDate() + i);
     return `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, '0')}-${String(dd.getDate()).padStart(2, '0')}`;
   });
 }
@@ -898,8 +898,8 @@ function SetPassword({ session, onDone }) {
 /* ---------- 7-day points strip (Athletes dashboard) ---------- */
 function WeekStrip({ points, color, onSelectDay, selectedDate, dailyMax = 10, tiers, animateIn = false, startDelay = 0 }) {
   const dates = weekDates();
-  const labels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
-  const todayIdx = new Date().getDay();
+  const labels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+  const todayIdx = (new Date().getDay() + 6) % 7;
   const [grown, setGrown] = useState(!animateIn);
   useEffect(() => {
     if (!animateIn) { setGrown(true); return; }
