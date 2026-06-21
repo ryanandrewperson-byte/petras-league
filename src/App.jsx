@@ -735,6 +735,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
+    { title: 'Your money, your bank', blurb: 'The My Day money bag fills through the week and bursts into a payday at a perfect week. Tap it \u2014 or the Week / Month / Challenge switch \u2014 to see everything you\u2019ve banked.' },
     { title: 'Spot bonuses', blurb: 'Commanders can drop a surprise reward anytime from Payouts \u2014 it lands with a flash on the athlete\u2019s screen and counts toward their payout.' },
     { title: 'Wins feed', blurb: 'Open the menu \u2192 Wins to see the whole family\u2019s badges, power-ups, and streaks roll in. Tap a reaction to cheer, and post a shoutout anytime.' },
     { title: 'Badges', blurb: 'Earn medallions for streaks, perfect days, power-ups, and more. Check your shelf on your Profile and tap \u201CSee all\u201D for the full set \u2014 they pop when you unlock one.' },
@@ -2883,13 +2884,6 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
           <p className="font-sans text-muted mt-2" style={{ fontSize: '11px' }}>Verify and pay these in the Payouts tab.</p>
         </div>
       )}
-
-      <div className="mt-4 pt-3 border-t border-white/10">
-        <p className="font-sans text-xs uppercase tracking-wider text-muted mb-1">Coach's note</p>
-        <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={2} placeholder="A word for this week…"
-          className="w-full rounded-lg bg-raised text-ghost text-sm p-2 outline-none border border-transparent focus:border-cyan placeholder-muted resize-none" />
-        <button onClick={save} disabled={saving || draft === (note || '')} className="mt-2 px-3 py-1.5 rounded-lg font-sans text-xs font-bold bg-cyan text-ink disabled:opacity-40">{saving ? 'Saving…' : 'Save note'}</button>
-      </div>
     </div>
   );
 }
@@ -2942,6 +2936,102 @@ function KidAthletes({ profile, userId }) {
   return <KidAthleteCard profile={profile} board={board} weekPts={weekPts} bonuses={bonuses} bonusProofs={bonusProofs} note={note} userId={userId} tasks={active.tasks} tiers={active.tiers} streak={streak} onChanged={load} />;
 }
 
+/* ---------- Kid cash earnings (computed from points — no parent action needed) ---------- */
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+function weekMondayOf(ds) {
+  const d = new Date(ds + 'T00:00:00');
+  const dow = (d.getDay() + 6) % 7;
+  const m = new Date(d); m.setDate(d.getDate() - dow);
+  return m.toISOString().slice(0, 10);
+}
+function periodTotals(earnings, period, weekStart, monthKey) {
+  if (!earnings) return { allowance: 0, champ: 0, power: 0, total: 0 };
+  let allowance = 0, champ = 0, power = 0;
+  earnings.weeks.forEach((w) => {
+    const inc = period === 'challenge' ? true : period === 'month' ? w.week.slice(0, 7) === monthKey : w.week === weekStart;
+    if (inc) { allowance += w.allowance; champ += w.champ; }
+  });
+  earnings.powerUps.forEach((pu) => {
+    const inc = period === 'challenge' ? true : period === 'month' ? pu.date.slice(0, 7) === monthKey : pu.date >= weekStart;
+    if (inc) power += pu.amount;
+  });
+  return { allowance, champ, power, total: allowance + champ + power };
+}
+function useKidEarnings(userId) {
+  const active = useActiveChallenge();
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    if (!active || !active.challenge) { setData(null); return; }
+    let alive = true;
+    (async () => {
+      const weeklyMax = (active.tasks.length || 0) * 7;
+      const tiers = active.tiers;
+      const { data: lb } = await supabase.rpc('get_leaderboard');
+      const champAmt = (lb || []).reduce((m, r) => Math.max(m, Number(r.champion_bonus) || 0), 0);
+      const { data: ents } = await supabase.from('daily_entries').select('id, kid_id, entry_date').eq('challenge_id', active.challenge.id);
+      const ids = (ents || []).map((e) => e.id);
+      const comp = {};
+      if (ids.length) {
+        const { data: ets } = await supabase.from('entry_tasks').select('entry_id, completed').in('entry_id', ids);
+        (ets || []).forEach((r) => { if (r.completed) comp[r.entry_id] = (comp[r.entry_id] || 0) + 1; });
+      }
+      const ptsByKidWeek = {};
+      (ents || []).forEach((e) => {
+        const w = weekMondayOf(e.entry_date);
+        (ptsByKidWeek[e.kid_id] = ptsByKidWeek[e.kid_id] || {});
+        ptsByKidWeek[e.kid_id][w] = (ptsByKidWeek[e.kid_id][w] || 0) + (comp[e.id] || 0);
+      });
+      const allWeeks = new Set();
+      Object.values(ptsByKidWeek).forEach((wm) => Object.keys(wm).forEach((w) => allWeeks.add(w)));
+      const winnerByWeek = {};
+      allWeeks.forEach((w) => {
+        let best = 0, kidWin = null;
+        Object.entries(ptsByKidWeek).forEach(([kid, wm]) => { const p = wm[w] || 0; if (p > best) { best = p; kidWin = kid; } });
+        if (kidWin) winnerByWeek[w] = kidWin;
+      });
+      const mine = ptsByKidWeek[userId] || {};
+      const weeks = Object.keys(mine).map((w) => ({
+        week: w, points: mine[w] || 0,
+        allowance: allowanceFromTiers(mine[w] || 0, weeklyMax, tiers),
+        champ: winnerByWeek[w] === userId ? champAmt : 0,
+      }));
+      const { data: bs } = await supabase.from('bonuses').select('amount, status, verified_at').eq('kid_id', userId).in('status', ['verified', 'paid']).not('verified_at', 'is', null);
+      const powerUps = (bs || []).map((b) => ({ amount: Number(b.amount) || 0, date: b.verified_at.slice(0, 10) }));
+      if (alive) setData({ weeks, powerUps });
+    })();
+    return () => { alive = false; };
+  }, [active, userId]);
+  return data;
+}
+
+function BankSheet({ earnings, weekTotals, color, challengeName, onClose }) {
+  const weekStart = weekDates()[0];
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const month = periodTotals(earnings, 'month', weekStart, monthKey);
+  const all = periodTotals(earnings, 'challenge', weekStart, monthKey);
+  const rows = [
+    { lbl: 'This week', sub: 'allowance + power-ups', val: weekTotals.total, c: color },
+    { lbl: 'This month', sub: MONTH_NAMES[new Date().getMonth()], val: earnings ? month.total : null, c: '#3DE8C0' },
+    { lbl: 'Whole challenge', sub: challengeName || 'Summer 2026', val: earnings ? all.total : null, c: '#29E0FF' },
+  ];
+  return (
+    <div className="fixed inset-0 z-50 bg-ink/95 backdrop-blur-sm flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+        <h2 className="font-display text-2xl tracking-wide text-ghost">My Bank</h2>
+        <button onClick={onClose} className="text-muted hover:text-ghost p-1" aria-label="Close"><X size={22} /></button>
+      </div>
+      <div className="p-4 flex flex-col gap-3">
+        {rows.map((r, i) => (
+          <div key={i} className="bg-panel border border-white/10 rounded-2xl px-4 py-4 flex items-center justify-between">
+            <div><p className="font-sans text-ghost text-sm">{r.lbl}</p><p className="font-sans" style={{ fontSize: '10px', marginTop: '2px', color: '#6E7080' }}>{r.sub}</p></div>
+            <p className="font-display tracking-wide" style={{ color: r.c, fontSize: '30px' }}>{r.val === null ? '…' : `$${r.val}`}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, userId, onChanged, tasks = [], tiers, streak = 0 }) {
   const today = todayKey();
   const [selDay, setSelDay] = useState(today);
@@ -2957,6 +3047,9 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
       if (!seen) { setPayday(true); try { localStorage.setItem(key, '1'); } catch {} }
     }
   }, [fillPct, userId, weekStart]);
+  const earnings = useKidEarnings(userId);
+  const [bankView, setBankView] = useState('week');
+  const [bankOpen, setBankOpen] = useState(false);
   const todayPts = weekPts[today] || 0;
   const phone = phoneStatus(todayPts, dailyMax);
   const champ = board && board.rank === 1 && board.week_points > 0;
@@ -2972,6 +3065,9 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
   const paceProjected = Math.round((paceTotal / (paceTodayIdx + 1)) * 7);
   const pace = allowanceFromTiers(paceProjected, dailyMax * 7, tiers);
   const nt = pace > 0 ? null : nextTier(paceTotal, dailyMax * 7, tiers);
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const weekTotals = { allowance, champ: champBonus, power: powerTotal, total: grand };
+  const seg = bankView === 'week' ? weekTotals : periodTotals(earnings, bankView, weekStart, monthKey);
 
   return (
     <div className="relative bg-panel rounded-2xl p-4 mb-4" style={{ borderLeft: `4px solid ${profile.hero_color}` }}>
@@ -2994,7 +3090,9 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
           <p className="font-display text-lg leading-none" style={{ color: profile.hero_color }}>#{board ? board.rank : '—'}</p>
         </div>
         <p className="font-sans text-muted uppercase tracking-wider mb-1" style={{ fontSize: '10px' }}>This week</p>
-        <WeeklyMoneyBag pct={fillPct} color={profile.hero_color} />
+        <button onClick={() => setBankOpen(true)} className="appearance-none bg-transparent border-0 p-0 cursor-pointer" aria-label="Open my bank">
+          <WeeklyMoneyBag pct={fillPct} color={profile.hero_color} />
+        </button>
         <p className="font-display leading-none mt-1" style={{ color: profile.hero_color, fontSize: '40px' }}>${grand}</p>
         <p className="font-sans text-muted" style={{ fontSize: '11px', marginTop: '3px' }}>allowance ${allowance}{champBonus ? ` · champ +$${champBonus}` : ''}{powerTotal ? ` · power-ups +$${powerTotal}` : ''}</p>
         {pace > 0 && (
@@ -3008,7 +3106,25 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
           </p>
         )}
       </div>
+
+      <div className="mb-3">
+        <div className="flex bg-raised rounded-xl p-1 gap-1 mb-2">
+          {[['week', 'Week'], ['month', 'Month'], ['challenge', 'Challenge']].map(([k, lbl]) => (
+            <button key={k} onClick={() => setBankView(k)} className="flex-1 py-1.5 rounded-lg font-sans text-xs font-bold transition-colors"
+              style={{ background: bankView === k ? profile.hero_color : 'transparent', color: bankView === k ? '#0B0B0F' : '#9A9CB0' }}>{lbl}</button>
+          ))}
+        </div>
+        <div className="bg-raised rounded-xl px-4 py-3">
+          {bankView !== 'week' && !earnings
+            ? <p className="font-sans text-muted text-sm">Adding it up…</p>
+            : <>
+                <p className="font-display leading-none" style={{ color: profile.hero_color, fontSize: '28px' }}>${seg.total}</p>
+                <p className="font-sans text-muted" style={{ fontSize: '10px', marginTop: '3px' }}>allowance ${seg.allowance}{seg.champ ? ` · champ $${seg.champ}` : ''}{seg.power ? ` · power-ups $${seg.power}` : ''}</p>
+              </>}
+        </div>
+      </div>
       {payday && <PaydayBurst amount={grand} color={profile.hero_color} onDone={() => setPayday(false)} />}
+      {bankOpen && <BankSheet earnings={earnings} weekTotals={weekTotals} color={profile.hero_color} challengeName={null} onClose={() => setBankOpen(false)} />}
 
       <WeekStrip points={weekPts} color={profile.hero_color} dailyMax={dailyMax} tiers={tiers} onSelectDay={(d) => setSelDay(s => s === d ? null : d)} selectedDate={selDay} />
       <p className="font-sans text-muted mt-1.5" style={{ fontSize: '10px' }}>{selDay === today ? 'Check off today below. Saves automatically.' : selDay ? 'Tap the day again to close.' : 'Tap a day to see that check-in.'}</p>
@@ -3039,11 +3155,6 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
           <p className="font-sans text-muted mt-2" style={{ fontSize: '11px' }}>Claim these and add proof in the Power-Ups tab.</p>
         </div>
       )}
-
-      <div className="mt-4 pt-3 border-t border-white/10">
-        <p className="font-sans text-xs uppercase tracking-wider text-muted mb-1">Coach's note</p>
-        <p className="font-sans text-sm" style={{ color: note ? '#F4F5FA' : '#9A9CB0' }}>{note || 'No note yet.'}</p>
-      </div>
     </div>
   );
 }
