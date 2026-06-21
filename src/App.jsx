@@ -532,6 +532,79 @@ function getSeasonalOn() {
   try { return localStorage.getItem(SEASONAL_KEY) !== 'off'; } catch { return true; }
 }
 
+/* ---------- Seasonal accent engine (data-driven; ~10 lines per future holiday) ---------- */
+// Each season: a date window + a base accent set, plus optional "peak" windows that add more.
+// Resolver returns null when accents are off or today is outside every window.
+const SEASONS = [
+  {
+    key: 'usa-summer-2026',
+    start: '2026-06-20', end: '2026-07-19',          // World Cup window (now → final)
+    palette: { red: '#E23B45', white: '#F4F5FA', blue: '#3E63E8' },
+    base: { hairline: true, ballTab: true, nameStar: true },
+    peaks: [
+      { start: '2026-07-01', end: '2026-07-06', add: { bunting: true, cornerFlag: true } }, // 250th + Round of 16
+    ],
+  },
+  // Future holidays slot in here, e.g.:
+  // { key:'halloween-2026', start:'2026-10-25', end:'2026-11-01', palette:{...}, base:{...} },
+];
+function activeSeason() {
+  if (!getSeasonalOn()) return null;
+  const today = todayKey();
+  for (const s of SEASONS) {
+    if (today >= s.start && today <= s.end) {
+      let cfg = { key: s.key, palette: s.palette, ...s.base };
+      for (const p of (s.peaks || [])) {
+        if (today >= p.start && today <= p.end) cfg = { ...cfg, ...p.add };
+      }
+      return cfg;
+    }
+  }
+  return null;
+}
+// Small 5-point star (name flair for the #1 athlete).
+function USAStar({ size = 13, color = '#E23B45' }) {
+  return (
+    <svg viewBox="0 0 20 20" width={size} height={size} className="shrink-0" aria-hidden="true">
+      <polygon points="10,1 12.4,7.2 19,7.2 13.7,11.2 15.8,17.6 10,13.6 4.2,17.6 6.3,11.2 1,7.2 7.6,7.2" fill={color} />
+    </svg>
+  );
+}
+// Soccer ball badge for the active nav tab.
+function SoccerBall({ size = 13 }) {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
+      <circle cx="12" cy="12" r="11" fill="#F4F5FA" stroke="#0B0B0F" strokeWidth="1.4" />
+      <polygon points="12,6 16,9 14.5,14 9.5,14 8,9" fill="#0B0B0F" />
+    </svg>
+  );
+}
+// Patriotic bunting swag strip (peak only, under the header).
+function Bunting({ palette }) {
+  const cols = [palette.red, palette.white, palette.blue];
+  const swags = Array.from({ length: 11 }, (_, i) => {
+    const x = i * 20;
+    return <path key={i} d={`M${x} 2 a10 10 0 0 0 20 0Z`} fill={cols[i % 3]} opacity="0.92" />;
+  });
+  return (
+    <svg viewBox="0 0 220 16" preserveAspectRatio="none" style={{ width: '100%', height: 14, display: 'block' }} aria-hidden="true">
+      <rect x="0" y="0" width="220" height="2" fill={palette.blue} />
+      {swags}
+    </svg>
+  );
+}
+// Star-spangled corner flag for hero cards (peak only).
+function CornerFlag({ palette, size = 48 }) {
+  return (
+    <svg viewBox="0 0 48 48" width={size} height={size} className="absolute top-0 right-0" aria-hidden="true">
+      <polygon points={`48,0 48,48 0,0`} fill={palette.blue} opacity="0.92" />
+      <g fill={palette.white}>
+        <circle cx="41" cy="6" r="1.4" /><circle cx="33" cy="6" r="1.4" /><circle cx="41" cy="14" r="1.4" />
+      </g>
+    </svg>
+  );
+}
+
 function SettingsPage({ accent, profile, isParent }) {
   const [seasonal, setSeasonal] = useState(getSeasonalOn);
   const toggleSeasonal = () => {
@@ -575,6 +648,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
+    { title: 'USA Summer look', blurb: 'The League is repping the USA all tournament long \u2014 a red/white/blue stripe on the nav, a soccer ball on your active tab, and a star for whoever\u2019s #1. It dials up around the 4th of July, and you can switch it off anytime in Settings.' },
     { title: 'Family Hub menu', blurb: 'Tap the menu in the top-left to jump between the Challenge, What\u2019s New, and Settings.' },
   ]},
   { date: 'June 20, 2026', items: [
@@ -716,35 +790,37 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
     return () => { alive = false; clearInterval(t); };
   }, [isParent, tab, refreshKey]);
 
+  const season = activeSeason();
   return (
     <div className="relative min-h-screen overflow-x-hidden">
       <HubNav open={navOpen} onClose={() => setNavOpen(false)} page={page} setPage={setPage} accent={accent} />
-      <div className="transition-transform duration-300 ease-out"
-        style={{ transform: navOpen ? `translateX(${NAV_W})` : 'translateX(0)' }}>
-        <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-16' : ''}`}
-          onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
+      <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-16' : ''}`}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
 
-          {/* Pull-to-refresh spinner */}
-          <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
-            style={{ top: devOffset ? 70 : 8, opacity: pull > 4 || refreshing ? 1 : 0,
-              transform: `translateY(${pull}px)`, transition: snap }}>
-            <div className="w-9 h-9 rounded-full bg-raised flex items-center justify-center"
-              style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
-              <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''}
-                style={{ color: accent, transform: refreshing ? 'none' : `rotate(${pull * 2.4}deg)` }} />
-            </div>
+        {/* Pull-to-refresh spinner (viewport-fixed; outside the push transform so it never breaks) */}
+        <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
+          style={{ top: devOffset ? 70 : 8, opacity: pull > 4 || refreshing ? 1 : 0,
+            transform: `translateY(${pull}px)`, transition: snap }}>
+          <div className="w-9 h-9 rounded-full bg-raised flex items-center justify-center"
+            style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
+            <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''}
+              style={{ color: accent, transform: refreshing ? 'none' : `rotate(${pull * 2.4}deg)` }} />
           </div>
+        </div>
 
-          {/* Occasional "pull to refresh" nudge — only when data is stale */}
-          <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
-            style={{ top: devOffset ? 74 : 12, opacity: nudge && pull === 0 && !refreshing && page === 'challenge' ? 1 : 0, transition: 'opacity .3s ease' }}>
-            <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-raised"
-              style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
-              <ChevronDown size={14} className="animate-bounce" style={{ color: accent }} />
-              <span className="font-sans" style={{ fontSize: '11px', color: accent, fontWeight: 600 }}>Pull to refresh</span>
-            </div>
+        {/* Occasional "pull to refresh" nudge — only when data is stale */}
+        <div className="pointer-events-none fixed left-0 right-0 flex justify-center z-40"
+          style={{ top: devOffset ? 74 : 12, opacity: nudge && pull === 0 && !refreshing && page === 'challenge' ? 1 : 0, transition: 'opacity .3s ease' }}>
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-raised"
+            style={{ boxShadow: '0 6px 16px -6px rgba(0,0,0,0.7)' }}>
+            <ChevronDown size={14} className="animate-bounce" style={{ color: accent }} />
+            <span className="font-sans" style={{ fontSize: '11px', color: accent, fontWeight: 600 }}>Pull to refresh</span>
           </div>
+        </div>
 
+        {/* Push wrapper around the scrolling content only — keeps fixed chrome (nav, spinner) viewport-locked */}
+        <div className="transition-transform duration-300 ease-out"
+          style={{ transform: navOpen ? `translateX(${NAV_W})` : 'translateX(0)' }}>
           <div style={{ transform: `translateY(${pull}px)`, transition: snap }}>
             <div className="max-w-md mx-auto px-6 py-8">
               <TopBar name={profile.full_name}
@@ -753,7 +829,8 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                 onOpenNav={() => setNavOpen(true)}
                 notify={isParent && attn.payouts > 0}
                 onOpenProfile={() => setShowProfile(true)}
-                onOpenGuide={page === 'challenge' ? () => setShowGuide(true) : undefined} />
+                onOpenGuide={page === 'challenge' ? () => setShowGuide(true) : undefined}
+                season={season} />
               {page === 'settings'
                 ? <SettingsPage accent={accent} profile={profile} isParent={isParent} />
                 : page === 'whatsnew'
@@ -775,12 +852,12 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                     </>}
             </div>
           </div>
-
-          {page === 'challenge' &&
-            <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} attn={attn} />}
-          {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
-          {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
         </div>
+
+        {page === 'challenge' &&
+          <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} attn={attn} season={season} pushX={navOpen ? NAV_W : null} />}
+        {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
+        {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
       </div>
     </div>
   );
@@ -956,13 +1033,21 @@ function Overview({ userId, setTab }) {
   );
 }
 
-function TabBar({ isParent, tab, setTab, color, attn = { payouts: 0 } }) {
+function TabBar({ isParent, tab, setTab, color, attn = { payouts: 0 }, season, pushX = null }) {
   const tabs = isParent
     ? [{ id: 'main', label: 'Athletes', Icon: Users }, { id: 'league', label: 'League', Icon: Trophy }, { id: 'bonus', label: 'Payouts', Icon: Wallet }, { id: 'challenges', label: 'Challenges', Icon: Calendar }]
     : [{ id: 'main', label: 'My Day', Icon: ListChecks }, { id: 'league', label: 'League', Icon: Trophy }, { id: 'bonus', label: 'Power-Ups', Icon: Zap }];
   return (
     <div className="fixed bottom-0 inset-x-0 z-30 bg-panel border-t border-white/10"
-      style={{ boxShadow: '0 -10px 30px -16px rgba(0,0,0,0.9)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
+      style={{ boxShadow: '0 -10px 30px -16px rgba(0,0,0,0.9)', paddingBottom: 'env(safe-area-inset-bottom)',
+        transform: pushX ? `translateX(${pushX})` : 'translateX(0)', transition: 'transform .3s ease' }}>
+      {season?.hairline && (
+        <div className="absolute top-0 inset-x-0 flex" style={{ height: 3 }} aria-hidden="true">
+          <div className="flex-1" style={{ background: season.palette.red }} />
+          <div className="flex-1" style={{ background: season.palette.white }} />
+          <div className="flex-1" style={{ background: season.palette.blue }} />
+        </div>
+      )}
       <div className="max-w-md mx-auto flex items-stretch px-2 pt-1.5 pb-1">
         {tabs.map(({ id, label, Icon }) => {
           const active = (tab === 'overview' ? 'main' : tab) === id;
@@ -977,6 +1062,9 @@ function TabBar({ isParent, tab, setTab, color, attn = { payouts: 0 } }) {
                 }}>
                 <Icon size={active ? 21 : 20} strokeWidth={active ? 2.6 : 2}
                   color={active ? '#0B0B0F' : '#9A9CB0'} />
+                {active && season?.ballTab && (
+                  <span className="absolute -top-1.5 -left-1.5" aria-hidden="true"><SoccerBall size={13} /></span>
+                )}
                 {badge > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center"
                     style={{ background: '#FF3D7F', color: '#0B0B0F', fontSize: '10px', fontWeight: 700 }} aria-label={`${badge} need attention`}>
@@ -2601,26 +2689,29 @@ function Burst({ color = '#FFC23C', label = 'POW!' }) {
 function Centered({ children }) {
   return <div className="min-h-screen bg-ink text-ghost flex items-center justify-center px-6 font-sans">{children}</div>;
 }
-function TopBar({ name, sub, color, onOpenNav, notify, onOpenProfile, onOpenGuide }) {
+function TopBar({ name, sub, color, onOpenNav, notify, onOpenProfile, onOpenGuide, season }) {
   return (
-    <div className="flex items-center gap-2 mb-6 pb-5 border-b border-white/10">
-      {onOpenNav && (
-        <button onClick={onOpenNav} aria-label="Open menu" className="relative text-ghost hover:text-white p-2 -ml-2 shrink-0">
-          <Menu size={22} />
-          {notify && <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ background: color }} />}
+    <>
+      <div className="flex items-center gap-2 mb-6 pb-5 border-b border-white/10">
+        {onOpenNav && (
+          <button onClick={onOpenNav} aria-label="Open menu" className="relative text-ghost hover:text-white p-2 -ml-2 shrink-0">
+            <Menu size={22} />
+            {notify && <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ background: color }} />}
+          </button>
+        )}
+        <button onClick={onOpenProfile} className="flex items-center gap-3 flex-1 min-w-0 text-left">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center font-display text-ink text-xl shrink-0" style={{ background: color }}>{name[0]}</div>
+          <div className="flex-1 min-w-0">
+            <h1 className="font-display text-2xl tracking-wide text-ghost leading-none truncate">{name}</h1>
+            <p className="font-sans text-muted text-xs uppercase tracking-wider mt-1 truncate">{sub}</p>
+          </div>
+          <ChevronRight size={18} className="text-muted shrink-0" />
         </button>
-      )}
-      <button onClick={onOpenProfile} className="flex items-center gap-3 flex-1 min-w-0 text-left">
-        <div className="w-12 h-12 rounded-xl flex items-center justify-center font-display text-ink text-xl shrink-0" style={{ background: color }}>{name[0]}</div>
-        <div className="flex-1 min-w-0">
-          <h1 className="font-display text-2xl tracking-wide text-ghost leading-none truncate">{name}</h1>
-          <p className="font-sans text-muted text-xs uppercase tracking-wider mt-1 truncate">{sub}</p>
-        </div>
-        <ChevronRight size={18} className="text-muted shrink-0" />
-      </button>
-      {onOpenGuide && <button onClick={onOpenGuide} className="text-muted hover:text-ghost p-2 shrink-0" aria-label="How it works"><HelpCircle size={18} /></button>}
-      <button onClick={() => supabase.auth.signOut()} className="text-muted hover:text-ghost p-2 shrink-0"><LogOut size={18} /></button>
-    </div>
+        {onOpenGuide && <button onClick={onOpenGuide} className="text-muted hover:text-ghost p-2 shrink-0" aria-label="How it works"><HelpCircle size={18} /></button>}
+        <button onClick={() => supabase.auth.signOut()} className="text-muted hover:text-ghost p-2 shrink-0"><LogOut size={18} /></button>
+      </div>
+      {season?.bunting && <div className="-mt-5 mb-5"><Bunting palette={season.palette} /></div>}
+    </>
   );
 }
 
@@ -2656,15 +2747,21 @@ function HeroCard({ hero, weeklyMax, big }) {
   const avg = Number(hero.avg) || 0;
   const powerPct = Math.max(4, Math.min(100, Math.round((avg / (weeklyMax || 70)) * 100)));
   const champ = hero.weekRank === 1 && hero.weekPts > 0;
+  const season = activeSeason();
+  const isTop = hero.seasonRank === 1;
   return (
     <div className="relative rounded-2xl overflow-hidden" style={{ border: `2px solid ${c}`, background: 'linear-gradient(160deg, #17171F 0%, #0B0B0F 100%)' }}>
       <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: `radial-gradient(${c}22 1px, transparent 1px)`, backgroundSize: '8px 8px', opacity: 0.5 }} />
       <div className="absolute top-0 right-0" style={{ width: 0, height: 0, borderTop: `70px solid ${c}`, borderLeft: '70px solid transparent', opacity: 0.16 }} />
+      {season?.cornerFlag && <CornerFlag palette={season.palette} size={70} />}
       <div className="relative p-4">
         <div className="flex items-center gap-3 mb-3">
           <StarMono letter={(hero.codename || hero.full_name)[0]} color={c} size={big ? 64 : 54} />
           <div className="flex-1 min-w-0">
-            <p className="font-display tracking-wide leading-none truncate" style={{ color: c, fontSize: big ? '30px' : '23px' }}>{hero.codename || hero.full_name}</p>
+            <p className="font-display tracking-wide leading-none truncate flex items-center gap-1.5" style={{ color: c, fontSize: big ? '30px' : '23px' }}>
+              <span className="truncate">{hero.codename || hero.full_name}</span>
+              {season?.nameStar && isTop && <USAStar size={big ? 16 : 14} color={season.palette.red} />}
+            </p>
             <p className="font-sans text-ghost text-sm truncate">{hero.full_name}</p>
             <p className="font-sans text-muted uppercase tracking-wider" style={{ fontSize: '11px' }}>{hero.sport}</p>
           </div>
