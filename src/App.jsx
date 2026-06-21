@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -59,6 +59,16 @@ function weekLabel(ds) {
 let REVEAL_SESSION = 1;
 let REVEAL_SHOWN = 0;
 
+const ymdOf = (dt) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+function streakFromDates(dateSet) {
+  if (!dateSet || !dateSet.size) return 0;
+  const d = new Date();
+  if (!dateSet.has(ymdOf(d))) d.setDate(d.getDate() - 1); // today not done yet doesn't break the streak
+  let n = 0;
+  while (dateSet.has(ymdOf(d))) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+
 function dayName(ds) {
   const [y, m, d] = ds.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short' });
@@ -115,7 +125,11 @@ function CelebrationProvider({ children }) {
         .center-pow{animation:centerPow 1.05s cubic-bezier(.2,1.1,.3,1) both;transform-origin:center}
         @keyframes checkPop{0%{transform:scale(.5)}55%{transform:scale(1.25)}100%{transform:scale(1)}}
         .check-pop{animation:checkPop .32s cubic-bezier(.2,1.4,.3,1) both}
-        @media (prefers-reduced-motion: reduce){.center-pow,.check-pop{animation:none}}
+        @keyframes crownDrop{0%{transform:translateY(-14px) scale(.3) rotate(-18deg);opacity:0}55%{transform:translateY(2px) scale(1.18) rotate(6deg);opacity:1}75%{transform:translateY(0) scale(.94) rotate(-3deg)}100%{transform:translateY(0) scale(1) rotate(0);opacity:1}}
+        .crown-drop{animation:crownDrop .6s cubic-bezier(.2,1.3,.4,1) both}
+        @keyframes flameFlicker{0%,100%{transform:scale(1) rotate(-1.5deg)}50%{transform:scale(1.13) rotate(1.5deg)}}
+        .flame-flicker{animation:flameFlicker 1.4s ease-in-out infinite;transform-origin:bottom center}
+        @media (prefers-reduced-motion: reduce){.center-pow,.check-pop,.crown-drop,.flame-flicker{animation:none}}
       `}</style>
       {children}
       {cele && <CenterBurst word={cele.word} color={cele.color} />}
@@ -127,38 +141,39 @@ function CelebrationProvider({ children }) {
 const DEV_EMAILS = ['ryanandrewperson@gmail.com'];
 
 function DevViewAs({ members, viewAs, onPick, onReset, devView, setDevView, setShowUsage }) {
+  const pill = (active, fill) => active
+    ? { background: fill, color: '#0B0B0F', border: '1px solid rgba(0,0,0,0.20)', boxShadow: '0 1px 3px rgba(0,0,0,0.28)', fontWeight: 700 }
+    : { background: '#FFFFFF', color: '#3A3A40', border: '1px solid rgba(0,0,0,0.14)', fontWeight: 500 };
   return (
-    <div className="fixed top-0 inset-x-0 z-50" style={{ background: 'rgba(17,13,22,0.97)', borderBottom: '1px dashed #FF3D7F', boxShadow: '0 2px 10px -4px rgba(0,0,0,0.6)' }}>
+    <div className="fixed top-0 inset-x-0 z-50" style={{ background: '#D5D5DB', borderBottom: '2px solid #FF3D7F', boxShadow: '0 2px 10px -3px rgba(0,0,0,0.45)' }}>
       <div className="max-w-5xl mx-auto px-3">
         <div className="flex items-center gap-2 py-1.5">
-          <span className="font-display tracking-widest shrink-0" style={{ color: '#FF3D7F', fontSize: '11px' }}>DEV</span>
-          <span className="font-sans shrink-0" style={{ fontSize: '10px', color: '#6E7080' }}>as</span>
+          <span className="font-display tracking-widest shrink-0" style={{ color: '#C2185B', fontSize: '11px' }}>DEV</span>
+          <span className="font-sans shrink-0" style={{ fontSize: '10px', color: '#6E6E73' }}>as</span>
           <div className="flex items-center gap-1.5 overflow-x-auto flex-1 min-w-0" style={{ scrollbarWidth: 'none' }}>
-            <button onClick={onReset} className="shrink-0 px-2 py-0.5 rounded-full font-sans text-xs" style={{ background: !viewAs ? '#FF3D7F' : '#20212B', color: !viewAs ? '#0B0B0F' : '#9A9CB0' }}>Me</button>
+            <button onClick={onReset} className="shrink-0 px-2.5 py-0.5 rounded-full font-sans text-xs" style={pill(!viewAs, '#FF3D7F')}>Me</button>
             {members.map(m => {
               const on = viewAs && viewAs.id === m.id;
+              const mc = m.hero_color || '#FFC23C';
               return (
-                <button key={m.id} onClick={() => onPick(m)} className="shrink-0 px-2 py-0.5 rounded-full font-sans text-xs flex items-center gap-1"
-                  style={{ background: on ? m.hero_color : '#20212B', color: on ? '#0B0B0F' : '#9A9CB0' }}>
-                  <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: m.hero_color }} />
+                <button key={m.id} onClick={() => onPick(m)} className="shrink-0 px-2.5 py-0.5 rounded-full font-sans text-xs flex items-center gap-1.5" style={pill(on, mc)}>
+                  <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: mc, border: on ? '1px solid rgba(0,0,0,0.25)' : 'none' }} />
                   {m.full_name.split(' ')[0]}
                 </button>
               );
             })}
           </div>
         </div>
-        <div className="flex items-center gap-2 py-1.5 border-t" style={{ borderColor: 'rgba(255,61,127,0.18)' }}>
+        <div className="flex items-center gap-2 py-1.5 border-t" style={{ borderColor: 'rgba(0,0,0,0.12)' }}>
           <button onClick={() => setShowUsage(true)} title="Usage stats"
-            className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded-full font-sans text-xs"
-            style={{ background: '#20212B', color: '#9A9CB0' }}>
+            className="shrink-0 flex items-center gap-1 px-2.5 py-0.5 rounded-full font-sans text-xs" style={pill(false, '#fff')}>
             <Activity size={13} /> Stats
           </button>
           <span className="flex-1" />
-          <span className="font-sans shrink-0" style={{ fontSize: '10px', color: '#6E7080' }}>view</span>
+          <span className="font-sans shrink-0" style={{ fontSize: '10px', color: '#6E6E73' }}>view</span>
           <div className="flex items-center gap-1 shrink-0">
             {['auto', 'mobile', 'desktop'].map(v => (
-              <button key={v} onClick={() => setDevView(v)} className="px-2 py-0.5 rounded-full font-sans text-xs capitalize"
-                style={{ background: devView === v ? '#29E0FF' : '#20212B', color: devView === v ? '#0B0B0F' : '#9A9CB0' }}>{v}</button>
+              <button key={v} onClick={() => setDevView(v)} className="px-2.5 py-0.5 rounded-full font-sans text-xs capitalize" style={pill(devView === v, '#29E0FF')}>{v}</button>
             ))}
           </div>
         </div>
@@ -995,7 +1010,7 @@ function WeekStandings({ rows }) {
             <div key={r.kid_id} className="relative bg-panel rounded-2xl p-4 flex items-center gap-3"
               style={{ boxShadow: champ ? `0 0 0 1.5px ${r.hero_color}, 0 10px 34px -10px ${r.hero_color}` : 'none' }}>
               <div className="w-7 flex justify-center shrink-0">
-                {champ ? <Crown size={22} style={{ color: '#FFC23C' }} /> : <span className="font-display text-2xl text-muted">{r.rank}</span>}
+                {champ ? <Crown size={22} className="crown-drop" style={{ color: '#FFC23C' }} /> : <span className="font-display text-2xl text-muted">{r.rank}</span>}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
@@ -1038,7 +1053,7 @@ function SummerStandings({ rows }) {
                 <div key={r.kid_id} className="relative bg-panel rounded-2xl p-4 flex items-center gap-3"
                   style={{ boxShadow: champ ? `0 0 0 1.5px ${r.hero_color}, 0 10px 34px -10px ${r.hero_color}` : 'none' }}>
                   <div className="w-7 flex justify-center shrink-0">
-                    {champ ? <Crown size={22} style={{ color: '#FFC23C' }} /> : <span className="font-display text-2xl text-muted">{r.rank}</span>}
+                    {champ ? <Crown size={22} className="crown-drop" style={{ color: '#FFC23C' }} /> : <span className="font-display text-2xl text-muted">{r.rank}</span>}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
@@ -1549,6 +1564,7 @@ function ParentAthletes({ userId, wide }) {
   const [notes, setNotes] = useState({});
   const [loading, setLoading] = useState(true);
   const [reveal, setReveal] = useState(false);
+  const [streaks, setStreaks] = useState({});
   const celebrate = useCelebrate();
   const prevPendingRef = useRef(null);
   const weekStart = weekDates()[0];
@@ -1557,6 +1573,12 @@ function ParentAthletes({ userId, wide }) {
   const load = async () => {
     const { data: ks } = await supabase.from('profiles').select('id, full_name, hero_color, sport, codename').eq('role', 'kid');
     setKids(ks || []);
+    const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
+    const { data: sdes } = await supabase.from('daily_entries').select('kid_id, entry_date').gte('entry_date', since);
+    const setsByKid = {};
+    (sdes || []).forEach(e => { (setsByKid[e.kid_id] = setsByKid[e.kid_id] || new Set()).add(e.entry_date); });
+    const sk = {}; (ks || []).forEach(k => { sk[k.id] = streakFromDates(setsByKid[k.id]); });
+    setStreaks(sk);
     const { data: lb } = await supabase.rpc('get_leaderboard');
     setBoard(lb || []);
     const wk = weekDates();
@@ -1616,6 +1638,7 @@ function ParentAthletes({ userId, wide }) {
       bonuses={bonuses.filter(b => b.kid_id === row.kid_id)} bonusProofs={bonusProofs}
       note={notes[row.kid_id] || ''} userId={userId} tasks={active.tasks} tiers={active.tiers}
       revealDelay={reveal ? gi * 650 : null}
+      streak={streaks[row.kid_id] || 0}
       onSaveNote={(text) => saveNote(kid, text, row)} onChanged={load} />;
   };
   let body;
@@ -1655,7 +1678,18 @@ function ChallengeBreak({ isParent }) {
   );
 }
 
-function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, userId, onSaveNote, onChanged, tasks = [], tiers, revealDelay = null }) {
+function StreakFlame({ streak }) {
+  if (!streak || streak < 3) return null;
+  const t = streak >= 30 ? { c: '#7CC5FF', s: 16 } : streak >= 14 ? { c: '#FF3D3D', s: 15 } : streak >= 7 ? { c: '#FF7A1A', s: 14 } : { c: '#FFA53C', s: 13 };
+  return (
+    <span className="flame-flicker inline-flex items-center gap-0.5 shrink-0" title={`${streak}-day check-in streak`}>
+      <Flame size={t.s} style={{ color: t.c }} />
+      <span className="font-display" style={{ color: t.c, fontSize: '12px' }}>{streak}</span>
+    </span>
+  );
+}
+
+function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, userId, onSaveNote, onChanged, tasks = [], tiers, revealDelay = null, streak = 0 }) {
   const [selDay, setSelDay] = useState(null);
   const [draft, setDraft] = useState(note || '');
   const [saving, setSaving] = useState(false);
@@ -1694,7 +1728,8 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
           <p className="font-display text-lg tracking-wide leading-none" style={{ color: kid.hero_color }}>{kid.full_name}</p>
           <p className="font-sans" style={{ fontSize: '11px', color: toneColor(phone.tone) }}>{phone.label} · today {todayPts}/{dailyMax}</p>
         </div>
-        {champ && <span className="font-display text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: '#FFC23C', color: '#0B0B0F' }}><Crown size={12} /> Champ</span>}
+        <StreakFlame streak={streak} />
+        {champ && <span className="crown-drop font-display text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: '#FFC23C', color: '#0B0B0F' }}><Crown size={12} /> Champ</span>}
       </div>
 
       <div className="flex items-center gap-3 mb-3 bg-raised rounded-xl p-3">
@@ -1759,12 +1794,16 @@ function KidAthletes({ profile, userId }) {
   const [bonusProofs, setBonusProofs] = useState({});
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(true);
+  const [streak, setStreak] = useState(0);
   const weekStart = weekDates()[0];
   const active = useActiveChallenge();
 
   const load = async () => {
     const { data: lb } = await supabase.rpc('get_leaderboard');
     setBoard((lb || []).find(r => r.kid_id === userId) || null);
+    const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
+    const { data: sdes } = await supabase.from('daily_entries').select('entry_date').eq('kid_id', userId).gte('entry_date', since);
+    setStreak(streakFromDates(new Set((sdes || []).map(e => e.entry_date))));
     const wk = weekDates();
     let wq = supabase.from('daily_entries').select('id, entry_date').eq('kid_id', userId).gte('entry_date', wk[0]);
     if (active && active.challenge) wq = wq.eq('challenge_id', active.challenge.id);
@@ -1792,10 +1831,10 @@ function KidAthletes({ profile, userId }) {
 
   if (!active || loading) return <p className="font-sans text-muted text-sm">Loading your card…</p>;
   if (!active.challenge) return <ChallengeBreak />;
-  return <KidAthleteCard profile={profile} board={board} weekPts={weekPts} bonuses={bonuses} bonusProofs={bonusProofs} note={note} userId={userId} tasks={active.tasks} tiers={active.tiers} onChanged={load} />;
+  return <KidAthleteCard profile={profile} board={board} weekPts={weekPts} bonuses={bonuses} bonusProofs={bonusProofs} note={note} userId={userId} tasks={active.tasks} tiers={active.tiers} streak={streak} onChanged={load} />;
 }
 
-function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, userId, onChanged, tasks = [], tiers }) {
+function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, userId, onChanged, tasks = [], tiers, streak = 0 }) {
   const today = todayKey();
   const [selDay, setSelDay] = useState(today);
   const weekStart = weekDates()[0];
@@ -1817,7 +1856,8 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
         <div className="flex-1 min-w-0">
           <p className="font-display text-lg tracking-wide leading-none flex items-center gap-1.5" style={{ color: profile.hero_color }}>
             <span className="truncate">{profile.full_name}</span>
-            {champ && <Crown size={15} className="shrink-0" style={{ color: '#FFC23C' }} />}
+            {champ && <Crown size={15} className="crown-drop shrink-0" style={{ color: '#FFC23C' }} />}
+            <StreakFlame streak={streak} />
           </p>
           <p className="font-sans" style={{ fontSize: '11px', color: toneColor(phone.tone) }}>{phone.label} · today {todayPts}/{dailyMax}</p>
         </div>
