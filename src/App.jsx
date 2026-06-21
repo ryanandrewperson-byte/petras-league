@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles, User, Camera, Cake } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -506,6 +506,7 @@ export default function App() {
 /* ---------- Family Hub nav (slide-out drawer) ---------- */
 const HUB_PAGES = [
   { id: 'challenge', label: 'The Challenge', sub: 'Daily check-ins & league', Icon: Trophy },
+  { id: 'profile', label: 'Profile', sub: 'Your hero card', Icon: User },
   { id: 'whatsnew', label: "What's New", sub: 'Latest feature updates', Icon: Sparkles },
   { id: 'settings', label: 'Settings', sub: 'Preferences & accents', Icon: Settings },
 ];
@@ -697,6 +698,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
+    { title: 'Profiles are here', blurb: 'Open the menu \u2192 Profile to set your photo, codename, hero color, goals, and birthday. Everyone in the family can see each other\u2019s hero card.' },
     { title: 'USA Summer look', blurb: 'The League is repping the USA all tournament long \u2014 a red/white/blue stripe across the nav and a star for whoever\u2019s #1. It dials up around the 4th of July, and you can switch it off anytime in Settings.' },
     { title: 'Family Hub menu', blurb: 'Tap the menu in the top-left to jump between the Challenge, What\u2019s New, and Settings.' },
   ]},
@@ -737,6 +739,211 @@ function WhatsNewPage({ accent }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ---------- Profile page (Phase 2) ---------- */
+const HERO_COLORS = ['#29E0FF', '#3DE8C0', '#FF4D6D', '#FFC23C', '#46E5A0', '#A855F7', '#FF7A1A', '#5B8CFF'];
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const PROFILE_INP = 'w-full bg-raised rounded-xl px-3 py-2.5 font-sans text-sm text-ghost outline-none border border-white/10 focus:border-white/25';
+
+function ProfileField({ label, children }) {
+  return (
+    <div>
+      <label className="font-sans text-xs uppercase tracking-wider text-muted mb-1.5 block px-1">{label}</label>
+      {children}
+    </div>
+  );
+}
+function ProfileTile({ value, label, color }) {
+  return (
+    <div className="flex-1 rounded-xl px-2 py-2 text-center" style={{ background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.07)' }}>
+      <div className="font-display text-xl leading-none" style={{ color }}>{value}</div>
+      <div className="font-sans text-muted mt-1" style={{ fontSize: '8px', textTransform: 'uppercase', letterSpacing: '.06em' }}>{label}</div>
+    </div>
+  );
+}
+
+function ProfilePage({ userId, accent, isOwn = true }) {
+  const [data, setData] = useState(null);
+  const [stats, setStats] = useState({ rank: null, points: null, streak: 0 });
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveErr, setSaveErr] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+  const [f, setF] = useState({ codename: '', sport: '', hero_color: accent, goals: '', birth_month: '', birth_day: '' });
+
+  const seedForm = (p) => setF({
+    codename: p.codename || '', sport: p.sport || '', hero_color: p.hero_color || accent,
+    goals: p.goals || '', birth_month: p.birth_month || '', birth_day: p.birth_day || '',
+  });
+
+  const load = async () => {
+    const { data: p } = await supabase.from('profiles')
+      .select('full_name, role, hero_color, codename, sport, avatar_url, birth_month, birth_day, goals')
+      .eq('id', userId).single();
+    if (!p) return;
+    setData(p);
+    seedForm(p);
+    if (p.role === 'kid') {
+      const { data: sm } = await supabase.rpc('get_summer_standings');
+      const row = (sm || []).find((r) => r.kid_id === userId);
+      const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
+      const { data: sdes } = await supabase.from('daily_entries').select('entry_date').eq('kid_id', userId).gte('entry_date', since);
+      setStats({ rank: row?.rank ?? null, points: row?.total_points ?? null, streak: streakFromDates(new Set((sdes || []).map((e) => e.entry_date))) });
+    }
+  };
+  useEffect(() => { load(); }, [userId]);
+
+  if (!data) return <p className="font-sans text-muted text-sm">Loading profile…</p>;
+  const c = data.hero_color || accent;
+  const isKid = data.role === 'kid';
+
+  const onPickPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${userId}/avatar-${Date.now()}.${ext}`;
+    const up = await supabase.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type });
+    if (!up.error) {
+      const { data: pub } = supabase.storage.from('avatars').getPublicUrl(path);
+      await supabase.from('profiles').update({ avatar_url: pub.publicUrl }).eq('id', userId);
+      setData((d) => ({ ...d, avatar_url: pub.publicUrl }));
+    }
+    setUploading(false);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const save = async () => {
+    setSaving(true); setSaveErr('');
+    const patch = {
+      codename: f.codename.trim() || null,
+      sport: f.sport.trim() || null,
+      hero_color: f.hero_color,
+      goals: f.goals.trim() || null,
+      birth_month: f.birth_month ? Number(f.birth_month) : null,
+      birth_day: f.birth_day ? Number(f.birth_day) : null,
+    };
+    const { error } = await supabase.from('profiles').update(patch).eq('id', userId);
+    setSaving(false);
+    if (error) { setSaveErr('Could not save — you can only edit your own profile.'); return; }
+    setData((d) => ({ ...d, ...patch }));
+    setEditing(false);
+  };
+
+  const bdayLabel = data.birth_month && data.birth_day ? `${MONTHS[data.birth_month - 1]} ${data.birth_day}` : null;
+  const goalsList = (data.goals || '').split('\n').map((s) => s.trim()).filter(Boolean);
+
+  return (
+    <div className="space-y-5">
+      {/* hero header */}
+      <div className="relative rounded-2xl overflow-hidden" style={{ background: `linear-gradient(165deg, ${c}1F, #0B0B0F)`, border: `2px solid ${c}` }}>
+        <div className="absolute inset-0 pointer-events-none" style={{ backgroundImage: `radial-gradient(${c}33 1px, transparent 1px)`, backgroundSize: '8px 8px', opacity: 0.45 }} />
+        <div className="absolute top-0 right-0" style={{ width: 0, height: 0, borderTop: `64px solid ${c}`, borderLeft: '64px solid transparent', opacity: 0.16 }} />
+        <div className="relative flex flex-col items-center text-center px-5 pt-6 pb-5">
+          <div className="relative mb-3">
+            <div className="w-24 h-24 rounded-2xl overflow-hidden flex items-center justify-center font-display text-ink" style={{ background: c, fontSize: '44px', boxShadow: `0 8px 20px -8px ${c}` }}>
+              {data.avatar_url ? <img src={data.avatar_url} alt="" className="w-full h-full object-cover" /> : (data.codename || data.full_name || '?')[0]}
+            </div>
+            {isOwn && (
+              <button onClick={() => fileRef.current?.click()} disabled={uploading} aria-label="Change photo"
+                className="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-raised border-2 border-ink flex items-center justify-center">
+                {uploading ? <RefreshCw size={14} className="animate-spin" style={{ color: c }} /> : <Camera size={14} style={{ color: c }} />}
+              </button>
+            )}
+            <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={onPickPhoto} />
+          </div>
+          <p className="font-display tracking-wide leading-none" style={{ color: c, fontSize: '32px' }}>{data.codename || data.full_name}</p>
+          <p className="font-sans text-ghost text-sm mt-1">{data.full_name}</p>
+          <p className="font-sans text-muted uppercase tracking-wider mt-1" style={{ fontSize: '10.5px' }}>{isKid ? (data.sport || 'Athlete') : 'Commander'}</p>
+          {isKid && (
+            <div className="flex gap-2 mt-4 w-full">
+              <ProfileTile value={stats.rank ? `#${stats.rank}` : '—'} label="Season" color={c} />
+              <ProfileTile value={stats.points ?? '—'} label="Points" color={c} />
+              <ProfileTile value={stats.streak || 0} label="Streak" color={c} />
+            </div>
+          )}
+          {isOwn && !editing && (
+            <button onClick={() => setEditing(true)} className="mt-4 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-raised font-sans text-xs font-semibold text-ghost">
+              <Pencil size={13} /> Edit profile
+            </button>
+          )}
+        </div>
+      </div>
+
+      {editing ? (
+        <div className="space-y-4">
+          <ProfileField label="Codename"><input value={f.codename} onChange={(e) => setF({ ...f, codename: e.target.value })} className={PROFILE_INP} placeholder="Your hero name" /></ProfileField>
+          <ProfileField label="Sport"><input value={f.sport} onChange={(e) => setF({ ...f, sport: e.target.value })} className={PROFILE_INP} placeholder="e.g. Soccer" /></ProfileField>
+          <ProfileField label="Hero color">
+            <div className="flex flex-wrap gap-2">
+              {HERO_COLORS.map((col) => (
+                <button key={col} onClick={() => setF({ ...f, hero_color: col })} aria-label={col}
+                  className="w-9 h-9 rounded-lg" style={{ background: col, outline: f.hero_color === col ? '2px solid #fff' : 'none', outlineOffset: 2 }} />
+              ))}
+            </div>
+          </ProfileField>
+          <ProfileField label="Birthday">
+            <div className="flex gap-2">
+              <select value={f.birth_month} onChange={(e) => setF({ ...f, birth_month: e.target.value })} className={`${PROFILE_INP} flex-1`}>
+                <option value="">Month</option>
+                {MONTHS.map((m, i) => <option key={m} value={i + 1}>{m}</option>)}
+              </select>
+              <select value={f.birth_day} onChange={(e) => setF({ ...f, birth_day: e.target.value })} className={`${PROFILE_INP} w-24`}>
+                <option value="">Day</option>
+                {Array.from({ length: 31 }, (_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+              </select>
+            </div>
+          </ProfileField>
+          <ProfileField label="Goals & dreams"><textarea value={f.goals} onChange={(e) => setF({ ...f, goals: e.target.value })} rows={4} className={PROFILE_INP} placeholder="One goal per line…" /></ProfileField>
+          {saveErr && <p className="font-sans text-magenta text-xs">{saveErr}</p>}
+          <div className="flex gap-2">
+            <button onClick={save} disabled={saving} className="flex-1 py-2.5 rounded-xl font-display tracking-wide text-ink" style={{ background: c }}>{saving ? 'Saving…' : 'Save'}</button>
+            <button onClick={() => { setEditing(false); setSaveErr(''); seedForm(data); }} className="px-4 py-2.5 rounded-xl font-sans text-sm font-semibold text-muted bg-raised">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <>
+          <div>
+            <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">Badge shelf</p>
+            <div className="bg-panel rounded-2xl p-4 flex items-center gap-3">
+              <div className="flex gap-2">
+                {[0, 1, 2, 3].map((i) => <div key={i} className="w-10 h-10 rounded-xl border border-dashed border-white/15 flex items-center justify-center"><Lock size={14} style={{ color: '#4a4b57' }} /></div>)}
+              </div>
+              <p className="font-sans text-muted text-xs flex-1">Badges unlock as you hit milestones. Coming soon.</p>
+            </div>
+          </div>
+
+          <div>
+            <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">Goals &amp; dreams</p>
+            <div className="bg-panel rounded-2xl p-4">
+              {goalsList.length ? (
+                <div className="space-y-2">
+                  {goalsList.map((g, i) => (
+                    <div key={i} className="flex items-start gap-2.5">
+                      <span className="w-1.5 h-1.5 rounded-full mt-2 shrink-0" style={{ background: c }} />
+                      <span className="font-sans text-ghost text-sm leading-snug">{g}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <p className="font-sans text-muted text-sm">{isOwn ? 'Tap Edit profile to add goals the family can cheer you on toward.' : 'No goals shared yet.'}</p>}
+            </div>
+          </div>
+
+          {bdayLabel && (
+            <div>
+              <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">Special day</p>
+              <div className="bg-panel rounded-2xl p-4 flex items-center gap-3">
+                <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${c}22` }}><Cake size={18} style={{ color: c }} /></span>
+                <div><p className="font-display text-lg tracking-wide text-ghost leading-none">{bdayLabel}</p><p className="font-sans text-muted text-xs mt-1">Birthday</p></div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -882,6 +1089,8 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                 season={season} />
               {page === 'settings'
                 ? <SettingsPage accent={accent} profile={profile} isParent={isParent} />
+                : page === 'profile'
+                  ? <ProfilePage userId={userId} accent={accent} isOwn />
                 : page === 'whatsnew'
                   ? <WhatsNewPage accent={accent} />
                   : <>
