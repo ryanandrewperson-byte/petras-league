@@ -2947,6 +2947,16 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
   const [selDay, setSelDay] = useState(today);
   const weekStart = weekDates()[0];
   const dailyMax = tasks.length;
+  const fillPct = dailyMax ? Math.min(1, (board ? board.week_points : 0) / (dailyMax * 7)) : 0;
+  const [payday, setPayday] = useState(false);
+  useEffect(() => {
+    if (fillPct >= 1) {
+      const key = `pl_payday_${userId}_${weekStart}`;
+      let seen = false;
+      try { seen = localStorage.getItem(key) === '1'; } catch {}
+      if (!seen) { setPayday(true); try { localStorage.setItem(key, '1'); } catch {} }
+    }
+  }, [fillPct, userId, weekStart]);
   const todayPts = weekPts[today] || 0;
   const phone = phoneStatus(todayPts, dailyMax);
   const champ = board && board.rank === 1 && board.week_points > 0;
@@ -2978,27 +2988,27 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
         </div>
       </div>
 
-      <div className="flex items-center gap-3 mb-3 bg-raised rounded-xl p-3">
-        <MoneyBag amount={grand} max={Math.max(70, grand)} color={profile.hero_color} />
-        <div className="flex-1">
-          <p className="font-display text-3xl leading-none" style={{ color: profile.hero_color }}>${grand}</p>
-          <p className="font-sans text-muted" style={{ fontSize: '11px' }}>allowance ${allowance}{champBonus ? ` · champ +$${champBonus}` : ''}{powerTotal ? ` · power-ups +$${powerTotal}` : ''}</p>
-          {pace > 0 && (
-            <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
-              <TrendingUp size={11} /> On pace for ${pace} this week
-            </p>
-          )}
-          {pace === 0 && nt && (
-            <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
-              <TrendingUp size={11} /> {nt.ptsNeeded} pts to unlock ${nt.amount}
-            </p>
-          )}
+      <div className="relative mb-3 bg-raised rounded-xl p-4 flex flex-col items-center text-center">
+        <div className="absolute top-3 right-3 text-right">
+          <p className="font-sans text-muted" style={{ fontSize: '9px' }}>RANK</p>
+          <p className="font-display text-lg leading-none" style={{ color: profile.hero_color }}>#{board ? board.rank : '—'}</p>
         </div>
-        <div className="text-right">
-          <p className="font-sans text-muted" style={{ fontSize: '10px' }}>Rank</p>
-          <p className="font-display text-xl leading-none" style={{ color: profile.hero_color }}>#{board ? board.rank : '—'}</p>
-        </div>
+        <p className="font-sans text-muted uppercase tracking-wider mb-1" style={{ fontSize: '10px' }}>This week</p>
+        <WeeklyMoneyBag pct={fillPct} color={profile.hero_color} />
+        <p className="font-display leading-none mt-1" style={{ color: profile.hero_color, fontSize: '40px' }}>${grand}</p>
+        <p className="font-sans text-muted" style={{ fontSize: '11px', marginTop: '3px' }}>allowance ${allowance}{champBonus ? ` · champ +$${champBonus}` : ''}{powerTotal ? ` · power-ups +$${powerTotal}` : ''}</p>
+        {pace > 0 && (
+          <p className="font-sans flex items-center gap-1 mt-1.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
+            <TrendingUp size={11} /> On pace for ${pace} this week
+          </p>
+        )}
+        {pace === 0 && nt && (
+          <p className="font-sans flex items-center gap-1 mt-1.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
+            <TrendingUp size={11} /> {nt.ptsNeeded} pts to unlock ${nt.amount}
+          </p>
+        )}
       </div>
+      {payday && <PaydayBurst amount={grand} color={profile.hero_color} onDone={() => setPayday(false)} />}
 
       <WeekStrip points={weekPts} color={profile.hero_color} dailyMax={dailyMax} tiers={tiers} onSelectDay={(d) => setSelDay(s => s === d ? null : d)} selectedDate={selDay} />
       <p className="font-sans text-muted mt-1.5" style={{ fontSize: '10px' }}>{selDay === today ? 'Check off today below. Saves automatically.' : selDay ? 'Tap the day again to close.' : 'Tap a day to see that check-in.'}</p>
@@ -3491,6 +3501,62 @@ function MoneyBag({ amount, max = 70, color, ghost = false }) {
         <path d={bag} fill="none" stroke={color} strokeWidth="1.6" strokeDasharray={ghost ? '3 3' : '0'} opacity={ghost ? 0.6 : 1} />
         <text x="24" y="32" textAnchor="middle" fontFamily="Bangers, cursive" fontSize="15" fill="#F4F5FA" opacity={ghost ? 0.5 : 0.95}>$</text>
       </svg>
+    </div>
+  );
+}
+
+// Big My Day bag: fills by weekly completion %, buzzes near the top, full at a perfect week.
+function WeeklyMoneyBag({ pct, color }) {
+  const [bounce, setBounce] = useState(false);
+  const prev = useRef(pct);
+  useEffect(() => {
+    if (pct > prev.current + 0.001) {
+      setBounce(true);
+      const id = setTimeout(() => setBounce(false), 650);
+      prev.current = pct;
+      return () => clearTimeout(id);
+    }
+    prev.current = pct;
+  }, [pct]);
+  const p = Math.max(0, Math.min(1, pct || 0));
+  const buzz = p >= 0.9 && p < 1;
+  const bag = 'M17 15 Q15 11 18.5 9 L29.5 9 Q33 11 31 15 Q43 23 39 36 Q37 43 24 43 Q11 43 9 36 Q5 23 17 15 Z';
+  const cid = 'wbag' + String(color).replace('#', '');
+  return (
+    <div className={`relative inline-block ${bounce ? 'bag-shake' : ''} ${buzz ? 'bag-buzz' : ''}`}>
+      <style>{`
+        @keyframes bagBuzz{0%,100%{transform:translateX(0) rotate(0)}25%{transform:translateX(-1px) rotate(-1.4deg)}75%{transform:translateX(1px) rotate(1.4deg)}}
+        .bag-buzz{animation:bagBuzz .18s linear infinite}
+      `}</style>
+      <svg viewBox="0 0 48 48" width="104" height="104">
+        <defs><clipPath id={cid}><path d={bag} /></clipPath></defs>
+        <path d={bag} fill="#20212B" />
+        <rect key={bounce ? 'rise' : 'static'} className={bounce ? 'bag-fill' : ''} x="0" y={48 - 48 * p} width="48" height={48 * p} fill={color} opacity={p >= 1 ? 1 : 0.92} clipPath={`url(#${cid})`} />
+        <path d={bag} fill="none" stroke={color} strokeWidth={p >= 1 ? 2 : 1.6} />
+        <text x="24" y="33" textAnchor="middle" fontFamily="Bangers, cursive" fontSize="15" fill={p > 0.5 ? '#0B0B0F' : '#F4F5FA'}>$</text>
+      </svg>
+    </div>
+  );
+}
+
+function PaydayBurst({ amount, color = '#FFC23C', onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 4500); return () => clearTimeout(t); }, [onDone]);
+  const coins = ['🪙', '💰', '💵', '🪙', '💰'];
+  return (
+    <div className="fixed inset-0 z-[95] flex flex-col items-center justify-center bg-ink/85 backdrop-blur-sm" onClick={onDone}>
+      <style>{`
+        @keyframes pdSpin{to{transform:rotate(360deg)}}
+        @keyframes pdPop{0%{transform:scale(.3);opacity:0}55%{transform:scale(1.1);opacity:1}100%{transform:scale(1)}}
+        @keyframes pdFall{0%{transform:translateY(-180px) rotate(0);opacity:0}10%{opacity:1}100%{transform:translateY(230px) rotate(360deg);opacity:0}}
+      `}</style>
+      <div className="absolute rounded-full" style={{ width: 320, height: 320, background: 'conic-gradient(from 0deg, transparent 0 10deg, rgba(255,194,60,.12) 10deg 16deg, transparent 16deg 34deg, rgba(255,194,60,.12) 34deg 40deg, transparent 40deg)', animation: 'pdSpin 16s linear infinite' }} />
+      <div className="absolute rounded-full" style={{ width: 240, height: 240, background: 'radial-gradient(circle, rgba(255,194,60,.3), transparent 65%)' }} />
+      {coins.map((ch, i) => <span key={i} className="absolute" style={{ left: `${15 + i * 17}%`, fontSize: '24px', animation: `pdFall 2.6s linear ${i * 0.4}s infinite` }}>{ch}</span>)}
+      <div className="relative z-10 text-center" style={{ animation: 'pdPop .6s cubic-bezier(.2,.8,.3,1) both' }}>
+        <p className="font-display tracking-wide text-white" style={{ fontSize: '34px' }}>PAYDAY!</p>
+        <p className="font-display" style={{ color, fontSize: '64px', lineHeight: 1 }}>${amount}</p>
+        <p className="font-sans text-muted text-sm mt-2">Perfect week — banked!</p>
+      </div>
     </div>
   );
 }
