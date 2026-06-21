@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -524,17 +524,13 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
     : `${Math.floor(age / 3600000)}h ${Math.floor((age % 3600000) / 60000)}m ago`;
 
   // ----- "Needs your eyes" counts for the tab badges (parents only) -----
-  const [attn, setAttn] = useState({ approvals: 0, payouts: 0 });
+  const [attn, setAttn] = useState({ payouts: 0 });
   useEffect(() => {
     if (!isParent) return;
     let alive = true;
     const loadAttn = async () => {
-      const wk = weekDates();
-      const [ap, po] = await Promise.all([
-        supabase.from('daily_entries').select('id', { count: 'exact', head: true }).neq('status', 'approved').gte('entry_date', wk[0]),
-        supabase.from('bonuses').select('id', { count: 'exact', head: true }).eq('status', 'claimed'),
-      ]);
-      if (alive) setAttn({ approvals: ap.count || 0, payouts: po.count || 0 });
+      const po = await supabase.from('bonuses').select('id', { count: 'exact', head: true }).eq('status', 'claimed');
+      if (alive) setAttn({ payouts: po.count || 0 });
     };
     loadAttn();
     const t = setInterval(loadAttn, 45000);
@@ -610,7 +606,7 @@ function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
   const titles = { overview: 'Overview', main: 'Athletes', league: 'League', bonus: 'Payouts', challenges: 'Challenges' };
   const blurbs = {
     overview: 'Everything that needs your eyes, at a glance.',
-    main: 'Review every athlete, drill into a day, and approve to lock.',
+    main: 'Review every athlete and drill into any day.',
     league: 'Weekly standings and the season championship.',
     bonus: 'Allowance is automatic — verify and pay out claimed power-ups.',
     challenges: 'Build and run the season: tasks, reward ladder, and power-ups.',
@@ -765,7 +761,7 @@ function Overview({ userId, setTab }) {
   );
 }
 
-function TabBar({ isParent, tab, setTab, color, attn = { approvals: 0, payouts: 0 } }) {
+function TabBar({ isParent, tab, setTab, color, attn = { payouts: 0 } }) {
   const tabs = isParent
     ? [{ id: 'main', label: 'Athletes', Icon: Users }, { id: 'league', label: 'League', Icon: Trophy }, { id: 'bonus', label: 'Payouts', Icon: Wallet }, { id: 'challenges', label: 'Challenges', Icon: Calendar }]
     : [{ id: 'main', label: 'My Day', Icon: ListChecks }, { id: 'league', label: 'League', Icon: Trophy }, { id: 'bonus', label: 'Power-Ups', Icon: Zap }];
@@ -775,7 +771,7 @@ function TabBar({ isParent, tab, setTab, color, attn = { approvals: 0, payouts: 
       <div className="max-w-md mx-auto flex items-stretch px-2 pt-1.5 pb-1">
         {tabs.map(({ id, label, Icon }) => {
           const active = (tab === 'overview' ? 'main' : tab) === id;
-          const badge = id === 'main' ? attn.approvals : id === 'bonus' ? attn.payouts : 0;
+          const badge = id === 'bonus' ? attn.payouts : 0;
           return (
             <button key={id} onClick={() => setTab(id)} aria-current={active ? 'page' : undefined}
               className="group flex-1 flex flex-col items-center gap-1 py-1.5 outline-none">
@@ -918,7 +914,7 @@ function WeekStrip({ points, color, onSelectDay, selectedDate, dailyMax = 10, ti
       <div className="flex items-center justify-between mb-1.5">
         <span className="font-sans text-xs text-muted">This week · <span className="text-ghost font-bold">{total}/{weeklyMax}</span></span>
         <span className="font-sans text-xs" style={{ color: pace > 0 ? color : '#9A9CB0' }}>
-          {total === 0 ? 'No points yet' : pace > 0 ? `On pace for $${pace}` : 'Below pace'}
+          {total === 0 ? 'No points yet' : pace > 0 ? 'On track' : 'Below pace'}
         </span>
       </div>
       <div className="flex items-end gap-1.5 h-10">
@@ -1453,8 +1449,7 @@ function DayPanel({ kidId, date, hero_color, role, userId, onChanged, tasks = []
   };
   useEffect(() => { load(); }, [kidId, date]);
 
-  const locked = entry?.status === 'approved';
-  const canEdit = role === 'parent' ? true : (isToday && !locked);
+  const canEdit = role === 'parent' ? true : isToday;
 
   const toggleTask = async (key) => {
     if (!canEdit) return;
@@ -1490,17 +1485,6 @@ function DayPanel({ kidId, date, hero_color, role, userId, onChanged, tasks = []
     setBusyTask(null);
   };
 
-  const approve = async () => {
-    if (!entry) return;
-    const next = entry.status === 'approved' ? 'pending' : 'approved';
-    await supabase.from('daily_entries').update({
-      status: next, approved_by: next === 'approved' ? userId : null, approved_at: next === 'approved' ? new Date().toISOString() : null,
-    }).eq('id', entry.id);
-    if (next === 'approved') celebrate({ word: 'LOCKED IN!', color: hero_color });
-    await load();
-    onChanged && onChanged();
-  };
-
   if (entry === undefined) return <p className="font-sans text-muted text-xs mt-3 pt-3 border-t border-white/10">Loading {dayName(date)}…</p>;
   const pts = tasks.filter(t => done[t.task_key]).length;
   const phone = phoneStatus(pts, tasks.length);
@@ -1509,7 +1493,7 @@ function DayPanel({ kidId, date, hero_color, role, userId, onChanged, tasks = []
     <div className="mt-3 pt-3 border-t border-white/10">
       <div className="flex items-center justify-between mb-2">
         <p className="font-sans text-xs uppercase tracking-wider text-muted">{dayLabelFull(date)} · {pts}/{tasks.length}</p>
-        <span className="font-sans text-xs" style={{ color: toneColor(phone.tone) }}>{phone.label}{locked ? ' · locked' : ''}</span>
+        <span className="font-sans text-xs" style={{ color: toneColor(phone.tone) }}>{phone.label}</span>
       </div>
       {!entry && <p className="font-sans text-muted text-xs mb-2">No check-in for this day{canEdit ? ' yet.' : '.'}</p>}
       <div className="grid gap-1.5">
@@ -1544,12 +1528,6 @@ function DayPanel({ kidId, date, hero_color, role, userId, onChanged, tasks = []
           );
         })}
       </div>
-      {role === 'parent' && (
-        <button onClick={approve} disabled={!entry} className="w-full mt-3 py-2.5 rounded-lg font-sans font-bold text-sm disabled:opacity-40"
-          style={{ background: locked ? '#20212B' : '#46E5A0', color: locked ? '#9A9CB0' : '#0B0B0F' }}>
-          {locked ? `Reopen ${dayName(date)} (unlock)` : `Approve & lock ${dayName(date)}`}
-        </button>
-      )}
     </div>
   );
 }
@@ -1565,8 +1543,6 @@ function ParentAthletes({ userId, wide }) {
   const [loading, setLoading] = useState(true);
   const [reveal, setReveal] = useState(false);
   const [streaks, setStreaks] = useState({});
-  const celebrate = useCelebrate();
-  const prevPendingRef = useRef(null);
   const weekStart = weekDates()[0];
   const active = useActiveChallenge();
 
@@ -1585,9 +1561,6 @@ function ParentAthletes({ userId, wide }) {
     let wq = supabase.from('daily_entries').select('id, kid_id, entry_date, status').gte('entry_date', wk[0]);
     if (active && active.challenge) wq = wq.eq('challenge_id', active.challenge.id);
     const { data: wdes } = await wq;
-    const pendingNow = (wdes || []).filter(e => e.status !== 'approved').length;
-    if (prevPendingRef.current != null && prevPendingRef.current > 0 && pendingNow === 0) celebrate({ word: 'ALL CLEAR!', color: '#46E5A0' });
-    prevPendingRef.current = pendingNow;
     const ids = (wdes || []).map(e => e.id);
     const cByEntry = {};
     if (ids.length) {
@@ -1662,7 +1635,7 @@ function ParentAthletes({ userId, wide }) {
     <div>
       <div className="mb-4">
         <p className="font-display text-lg tracking-wide" style={{ color: '#FFC23C' }}>{active.challenge.name}</p>
-        <p className="font-sans text-muted text-xs">Tap any day in a strip to review or fix it, then approve to lock.</p>
+        <p className="font-sans text-muted text-xs">Tap any day in a strip to review or fix a check-in.</p>
       </div>
       {body}
     </div>
@@ -1707,6 +1680,12 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
   const powerTotal = weekEarned.reduce((s, b) => s + Number(b.amount), 0);
   const grand = allowance + champBonus + powerTotal;
 
+  const paceVals = weekDates().map(d => weekPts[d] || 0);
+  const paceTotal = paceVals.reduce((a, b) => a + b, 0);
+  const paceTodayIdx = (new Date().getDay() + 6) % 7;
+  const paceProjected = Math.round((paceTotal / (paceTodayIdx + 1)) * 7);
+  const pace = allowanceFromTiers(paceProjected, dailyMax * 7, tiers);
+
   const animating = revealDelay != null;
   const [prog, setProg] = useState(animating ? 0 : 1);
   useEffect(() => {
@@ -1737,6 +1716,11 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
         <div className="flex-1">
           <p className="font-display text-3xl leading-none" style={{ color: kid.hero_color }}>${shownGrand}</p>
           <p className="font-sans text-muted" style={{ fontSize: '11px' }}>allowance ${allowance}{champBonus ? ` · champ +$${champBonus}` : ''}{powerTotal ? ` · power-ups +$${powerTotal}` : ''}</p>
+          {pace > 0 && (
+            <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: kid.hero_color }}>
+              <TrendingUp size={11} /> On pace for ${pace} this week
+            </p>
+          )}
         </div>
         <div className="text-right">
           <p className="font-sans text-muted" style={{ fontSize: '10px' }}>Rank</p>
@@ -1745,7 +1729,7 @@ function ParentAthleteCard({ kid, board, weekPts, bonuses, bonusProofs, note, us
       </div>
 
       <WeekStrip points={weekPts} color={kid.hero_color} dailyMax={dailyMax} tiers={tiers} animateIn={animating} startDelay={revealDelay || 0} onSelectDay={(d) => setSelDay(s => s === d ? null : d)} selectedDate={selDay} />
-      <p className="font-sans text-muted mt-1.5" style={{ fontSize: '10px' }}>{selDay ? 'Tap the day again to close.' : 'Tap a day to review and approve its check-in.'}</p>
+      <p className="font-sans text-muted mt-1.5" style={{ fontSize: '10px' }}>{selDay ? 'Tap the day again to close.' : 'Tap a day to review or fix that check-in.'}</p>
 
       {selDay && <DayPanel kidId={kid.id} date={selDay} hero_color={kid.hero_color} role="parent" userId={userId} onChanged={onChanged} tasks={tasks} />}
 
@@ -1848,6 +1832,12 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
   const powerTotal = weekEarned.reduce((s, b) => s + Number(b.amount), 0);
   const grand = allowance + champBonus + powerTotal;
 
+  const paceVals = weekDates().map(d => weekPts[d] || 0);
+  const paceTotal = paceVals.reduce((a, b) => a + b, 0);
+  const paceTodayIdx = (new Date().getDay() + 6) % 7;
+  const paceProjected = Math.round((paceTotal / (paceTodayIdx + 1)) * 7);
+  const pace = allowanceFromTiers(paceProjected, dailyMax * 7, tiers);
+
   return (
     <div className="relative bg-panel rounded-2xl p-4 mb-4" style={{ borderLeft: `4px solid ${profile.hero_color}` }}>
       {dailyMax > 0 && todayPts === dailyMax && <div className="absolute -top-3 -right-2 z-10"><Burst color={profile.hero_color} label="POW!" /></div>}
@@ -1868,6 +1858,11 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
         <div className="flex-1">
           <p className="font-display text-3xl leading-none" style={{ color: profile.hero_color }}>${grand}</p>
           <p className="font-sans text-muted" style={{ fontSize: '11px' }}>allowance ${allowance}{champBonus ? ` · champ +$${champBonus}` : ''}{powerTotal ? ` · power-ups +$${powerTotal}` : ''}</p>
+          {pace > 0 && (
+            <p className="font-sans flex items-center gap-1 mt-0.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
+              <TrendingUp size={11} /> On pace for ${pace} this week
+            </p>
+          )}
         </div>
         <div className="text-right">
           <p className="font-sans text-muted" style={{ fontSize: '10px' }}>Rank</p>
