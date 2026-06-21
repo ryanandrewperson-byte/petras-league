@@ -645,6 +645,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                 sub={isParent ? 'Commander' : `${profile.codename} · ${profile.sport}`}
                 color={accent}
                 onOpenNav={() => setNavOpen(true)}
+                notify={isParent && attn.payouts > 0}
                 onOpenProfile={() => setShowProfile(true)}
                 onOpenGuide={page === 'challenge' ? () => setShowGuide(true) : undefined} />
               {page === 'settings'
@@ -2494,13 +2495,13 @@ function Burst({ color = '#FFC23C', label = 'POW!' }) {
 function Centered({ children }) {
   return <div className="min-h-screen bg-ink text-ghost flex items-center justify-center px-6 font-sans">{children}</div>;
 }
-function TopBar({ name, sub, color, onOpenNav, onOpenProfile, onOpenGuide }) {
+function TopBar({ name, sub, color, onOpenNav, notify, onOpenProfile, onOpenGuide }) {
   return (
     <div className="flex items-center gap-2 mb-6 pb-5 border-b border-white/10">
       {onOpenNav && (
         <button onClick={onOpenNav} aria-label="Open menu" className="relative text-ghost hover:text-white p-2 -ml-2 shrink-0">
           <Menu size={22} />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ background: color }} />
+          {notify && <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full" style={{ background: color }} />}
         </button>
       )}
       <button onClick={onOpenProfile} className="flex items-center gap-3 flex-1 min-w-0 text-left">
