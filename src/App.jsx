@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles, User, Camera, Cake } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles, User, Camera, Cake, Star, Medal } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -698,6 +698,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
+    { title: 'Badges', blurb: 'Earn medallions for streaks, perfect days, power-ups, and more. Check your shelf on your Profile and tap \u201CSee all\u201D for the full set \u2014 they pop when you unlock one.' },
     { title: 'Profiles are here', blurb: 'Open the menu \u2192 Profile to set your photo, codename, hero color, goals, and birthday. Everyone in the family can see each other\u2019s hero card.' },
     { title: 'USA Summer look', blurb: 'The League is repping the USA all tournament long \u2014 a red/white/blue stripe across the nav and a star for whoever\u2019s #1. It dials up around the 4th of July, and you can switch it off anytime in Settings.' },
     { title: 'Family Hub menu', blurb: 'Tap the menu in the top-left to jump between the Challenge, What\u2019s New, and Settings.' },
@@ -739,6 +740,188 @@ function WhatsNewPage({ accent }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ---------- Badges (Phase 2) ---------- */
+// All derived from existing data — no new table. Champion/Repeat/MVP need weekly history or
+// season-end, so they stay locked until that lands (flagged `future`).
+const BADGES = [
+  { id: 'first',    name: 'First Step',   crit: 'Log your first day',        color: '#3DE8C0', Icon: Check },
+  { id: 'perfday',  name: 'Perfect Day',  crit: 'Complete every task in a day', color: '#FFC23C', Icon: Star },
+  { id: 'perfweek', name: 'Perfect Week', crit: 'A perfect day, all 7 days', color: '#FFD23C', Icon: Calendar },
+  { id: 'streak3',  name: 'On Fire',      crit: '3-day streak',  color: '#FFA53C', Icon: Flame, prog: (s) => `${Math.min(s.maxStreak, 3)}/3` },
+  { id: 'streak7',  name: 'Blazing',      crit: '7-day streak',  color: '#FF7A1A', Icon: Flame, prog: (s) => `${Math.min(s.maxStreak, 7)}/7` },
+  { id: 'streak14', name: 'Inferno',      crit: '14-day streak', color: '#FF3D3D', Icon: Flame, prog: (s) => `${Math.min(s.maxStreak, 14)}/14` },
+  { id: 'streak30', name: 'Iron Will',    crit: '30-day streak', color: '#7CC5FF', Icon: Flame, prog: (s) => `${Math.min(s.maxStreak, 30)}/30` },
+  { id: 'power',    name: 'Power Surge',  crit: 'Earn your first power-up',  color: '#FF4D6D', Icon: Zap },
+  { id: 'champion', name: 'Champion',     crit: 'Win a week',    color: '#FFC23C', Icon: Trophy, future: true },
+  { id: 'repeat',   name: 'Repeat Champ', crit: 'Win 2 weeks',   color: '#A855F7', Icon: Medal,  future: true },
+  { id: 'iron',     name: 'Iron Athlete', crit: '50 total check-ins', color: '#9FB3C8', Icon: Shield, prog: (s) => `${Math.min(s.totalCheckins, 50)}/50` },
+  { id: 'mvp',      name: 'Season MVP',   crit: 'Finish #1 for the season', color: '#FFD700', Icon: Crown, future: true },
+];
+function earnedBadges(stats) {
+  const e = new Set();
+  if (!stats) return e;
+  if (stats.totalCheckins >= 1) e.add('first');
+  if (stats.anyPerfectDay) e.add('perfday');
+  if (stats.anyPerfectWeek) e.add('perfweek');
+  if (stats.maxStreak >= 3) e.add('streak3');
+  if (stats.maxStreak >= 7) e.add('streak7');
+  if (stats.maxStreak >= 14) e.add('streak14');
+  if (stats.maxStreak >= 30) e.add('streak30');
+  if (stats.hasPowerUp) e.add('power');
+  if (stats.totalCheckins >= 50) e.add('iron');
+  return e;
+}
+function longestRun(dateSet) {
+  const arr = [...dateSet].sort();
+  let best = 0, cur = 0, prev = null;
+  for (const ds of arr) {
+    const d = new Date(ds + 'T00:00:00');
+    if (prev && (d - prev) === 86400000) cur++; else cur = 1;
+    if (cur > best) best = cur;
+    prev = d;
+  }
+  return best;
+}
+function hasPerfectWeek(perfectDates) {
+  const byWeek = {};
+  for (const ds of perfectDates) {
+    const d = new Date(ds + 'T00:00:00');
+    const dow = (d.getDay() + 6) % 7;          // Monday = 0
+    const mon = new Date(d); mon.setDate(d.getDate() - dow);
+    const key = mon.toISOString().slice(0, 10);
+    byWeek[key] = (byWeek[key] || 0) + 1;
+  }
+  return Object.values(byWeek).some((n) => n >= 7);
+}
+function useBadgeStats(userId) {
+  const active = useActiveChallenge();
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    (async () => {
+      let eq = supabase.from('daily_entries').select('id, entry_date').eq('kid_id', userId);
+      if (active.challenge) eq = eq.eq('challenge_id', active.challenge.id);
+      const { data: entries } = await eq;
+      const list = entries || [];
+      const dateSet = new Set(list.map((e) => e.entry_date));
+      const totalCheckins = dateSet.size;
+      const maxStreak = longestRun(dateSet);
+      const totalTasks = (active.tasks || []).length;
+      const perfectDates = new Set();
+      const ids = list.map((e) => e.id);
+      if (totalTasks > 0 && ids.length) {
+        const { data: ets } = await supabase.from('entry_tasks').select('entry_id, completed').in('entry_id', ids);
+        const comp = {};
+        (ets || []).forEach((r) => { if (r.completed) comp[r.entry_id] = (comp[r.entry_id] || 0) + 1; });
+        list.forEach((e) => { if ((comp[e.id] || 0) >= totalTasks) perfectDates.add(e.entry_date); });
+      }
+      const { data: bs } = await supabase.from('bonuses').select('id, status, verified_at').eq('kid_id', userId);
+      const hasPowerUp = (bs || []).some((b) => b.status === 'verified' || b.verified_at);
+      if (alive) setStats({ totalCheckins, maxStreak, anyPerfectDay: perfectDates.size > 0, anyPerfectWeek: hasPerfectWeek(perfectDates), hasPowerUp });
+    })();
+    return () => { alive = false; };
+  }, [active, userId]);
+  return stats;
+}
+
+function HexBadge({ Icon, color, size = 64, locked = false }) {
+  const clip = 'polygon(50% 0,93% 25%,93% 75%,50% 100%,7% 75%,7% 25%)';
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <div className="absolute inset-0" style={{ clipPath: clip, background: locked ? '#2a2b35' : color }} />
+      <div className="absolute" style={{ inset: 3, clipPath: clip, background: locked ? '#101015' : `radial-gradient(75% 75% at 50% 35%, ${color}33, #0a0a0f)` }} />
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Icon size={Math.round(size * 0.42)} strokeWidth={2.2} color={locked ? '#4a4b57' : color} />
+      </div>
+    </div>
+  );
+}
+
+function BadgeGallery({ earned, stats, accent, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-ink/95 backdrop-blur-sm flex flex-col" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
+      <div className="flex items-center justify-between px-5 py-4 border-b border-white/10">
+        <h2 className="font-display text-2xl tracking-wide text-ghost">Badges</h2>
+        <button onClick={onClose} className="text-muted hover:text-ghost p-1" aria-label="Close"><X size={22} /></button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="grid grid-cols-2 gap-3">
+          {BADGES.map((b) => {
+            const got = earned.has(b.id);
+            return (
+              <div key={b.id} className="bg-panel rounded-2xl p-4 flex flex-col items-center text-center gap-2">
+                <HexBadge Icon={b.Icon} color={b.color} size={62} locked={!got} />
+                <p className="font-display text-base tracking-wide leading-none" style={{ color: got ? '#F4F5FA' : '#9A9CB0' }}>{b.name}</p>
+                <p className="font-sans text-muted" style={{ fontSize: '10.5px', lineHeight: 1.35 }}>{b.crit}</p>
+                {got
+                  ? <span className="font-sans uppercase tracking-wider font-bold" style={{ fontSize: '9px', color: '#46E5A0' }}>Earned</span>
+                  : b.future
+                    ? <span className="font-sans uppercase tracking-wider" style={{ fontSize: '9px', color: '#6E7080' }}>Coming soon</span>
+                    : <span className="font-sans uppercase tracking-wider" style={{ fontSize: '9px', color: '#6E7080' }}>{b.prog ? b.prog(stats) : 'Locked'}</span>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BadgeUnlock({ badge, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 2600); return () => clearTimeout(t); }, [badge, onDone]);
+  return (
+    <div className="fixed inset-0 z-[90] flex flex-col items-center justify-center gap-3 bg-ink/80 backdrop-blur-sm" onClick={onDone}>
+      <style>{`@keyframes badgePop{0%{transform:scale(.2) rotate(-12deg);opacity:0}55%{transform:scale(1.12) rotate(4deg);opacity:1}100%{transform:scale(1) rotate(0)}}`}</style>
+      <div style={{ animation: 'badgePop .5s cubic-bezier(.2,.8,.3,1) both' }}><HexBadge Icon={badge.Icon} color={badge.color} size={120} /></div>
+      <p className="font-display text-3xl tracking-wide text-ghost">Badge unlocked!</p>
+      <p className="font-display text-xl tracking-wide" style={{ color: badge.color }}>{badge.name}</p>
+      <p className="font-sans text-muted text-sm">{badge.crit}</p>
+    </div>
+  );
+}
+
+function Badges({ userId, accent, isOwn = false }) {
+  const stats = useBadgeStats(userId);
+  const [gallery, setGallery] = useState(false);
+  const [pop, setPop] = useState([]);
+  useEffect(() => {
+    if (!stats || !isOwn) return;
+    const earned = earnedBadges(stats);
+    const ids = [...earned];
+    const key = `pl_badges_seen_${userId}`;
+    let seen = null;
+    try { seen = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+    if (!seen) {
+      const all = BADGES.filter((b) => earned.has(b.id));   // first time: introduce every earned badge
+      if (all.length) setPop(all);
+      try { localStorage.setItem(key, JSON.stringify(ids)); } catch {}
+      return;
+    }
+    const seenSet = new Set(seen);
+    const fresh = BADGES.filter((b) => earned.has(b.id) && !seenSet.has(b.id));
+    if (fresh.length) { setPop(fresh); try { localStorage.setItem(key, JSON.stringify(ids)); } catch {} }
+  }, [stats, userId, isOwn]);
+
+  const earned = earnedBadges(stats);
+  const earnedList = BADGES.filter((b) => earned.has(b.id));
+  return (
+    <div>
+      <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">Badge shelf{stats ? ` · ${earnedList.length} earned` : ''}</p>
+      <div className="bg-panel rounded-2xl p-4 flex items-center gap-3">
+        {!stats
+          ? <p className="font-sans text-muted text-xs flex-1">Loading badges…</p>
+          : earnedList.length
+            ? <div className="flex gap-2.5 flex-1 overflow-x-auto">{earnedList.slice(0, 6).map((b) => <HexBadge key={b.id} Icon={b.Icon} color={b.color} size={46} />)}</div>
+            : <p className="font-sans text-muted text-xs flex-1">Check in and build streaks to earn your first badge.</p>}
+        <button onClick={() => setGallery(true)} className="font-sans text-xs font-semibold shrink-0" style={{ color: accent }}>See all →</button>
+      </div>
+      {gallery && <BadgeGallery earned={earned} stats={stats || {}} accent={accent} onClose={() => setGallery(false)} />}
+      {isOwn && pop.length > 0 && <BadgeUnlock badge={pop[0]} onDone={() => setPop((q) => q.slice(1))} />}
     </div>
   );
 }
@@ -907,15 +1090,7 @@ function ProfilePage({ userId, accent, isOwn = true }) {
         </div>
       ) : (
         <>
-          <div>
-            <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">Badge shelf</p>
-            <div className="bg-panel rounded-2xl p-4 flex items-center gap-3">
-              <div className="flex gap-2">
-                {[0, 1, 2, 3].map((i) => <div key={i} className="w-10 h-10 rounded-xl border border-dashed border-white/15 flex items-center justify-center"><Lock size={14} style={{ color: '#4a4b57' }} /></div>)}
-              </div>
-              <p className="font-sans text-muted text-xs flex-1">Badges unlock as you hit milestones. Coming soon.</p>
-            </div>
-          </div>
+          {isKid && <Badges userId={userId} accent={c} isOwn={isOwn} />}
 
           <div>
             <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2 px-1">Goals &amp; dreams</p>
