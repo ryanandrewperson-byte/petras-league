@@ -508,6 +508,24 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
     : age < STALE_MS ? `${Math.floor(age / 60000)}m ago`
     : `${Math.floor(age / 3600000)}h ${Math.floor((age % 3600000) / 60000)}m ago`;
 
+  // ----- "Needs your eyes" counts for the tab badges (parents only) -----
+  const [attn, setAttn] = useState({ approvals: 0, payouts: 0 });
+  useEffect(() => {
+    if (!isParent) return;
+    let alive = true;
+    const loadAttn = async () => {
+      const wk = weekDates();
+      const [ap, po] = await Promise.all([
+        supabase.from('daily_entries').select('id', { count: 'exact', head: true }).neq('status', 'approved').gte('entry_date', wk[0]),
+        supabase.from('bonuses').select('id', { count: 'exact', head: true }).eq('status', 'claimed'),
+      ]);
+      if (alive) setAttn({ approvals: ap.count || 0, payouts: po.count || 0 });
+    };
+    loadAttn();
+    const t = setInterval(loadAttn, 45000);
+    return () => { alive = false; clearInterval(t); };
+  }, [isParent, tab, refreshKey]);
+
   return (
     <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-16' : ''}`}
       onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
@@ -555,7 +573,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
         </div>
       </div>
 
-      <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} />
+      <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} attn={attn} />
       {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
       {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
     </div>
@@ -732,7 +750,7 @@ function Overview({ userId, setTab }) {
   );
 }
 
-function TabBar({ isParent, tab, setTab, color }) {
+function TabBar({ isParent, tab, setTab, color, attn = { approvals: 0, payouts: 0 } }) {
   const tabs = isParent
     ? [{ id: 'main', label: 'Athletes', Icon: Users }, { id: 'league', label: 'League', Icon: Trophy }, { id: 'bonus', label: 'Payouts', Icon: Wallet }, { id: 'challenges', label: 'Challenges', Icon: Calendar }]
     : [{ id: 'main', label: 'My Day', Icon: ListChecks }, { id: 'league', label: 'League', Icon: Trophy }, { id: 'bonus', label: 'Power-Ups', Icon: Zap }];
@@ -742,6 +760,7 @@ function TabBar({ isParent, tab, setTab, color }) {
       <div className="max-w-md mx-auto flex items-stretch px-2 pt-1.5 pb-1">
         {tabs.map(({ id, label, Icon }) => {
           const active = (tab === 'overview' ? 'main' : tab) === id;
+          const badge = id === 'main' ? attn.approvals : id === 'bonus' ? attn.payouts : 0;
           return (
             <button key={id} onClick={() => setTab(id)} aria-current={active ? 'page' : undefined}
               className="group flex-1 flex flex-col items-center gap-1 py-1.5 outline-none">
@@ -752,6 +771,13 @@ function TabBar({ isParent, tab, setTab, color }) {
                 }}>
                 <Icon size={active ? 21 : 20} strokeWidth={active ? 2.6 : 2}
                   color={active ? '#0B0B0F' : '#9A9CB0'} />
+                {badge > 0 && (
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full flex items-center justify-center"
+                    style={{ background: '#FF3D7F', color: '#0B0B0F', fontSize: '10px', fontWeight: 700 }} aria-label={`${badge} need attention`}>
+                    <span className="absolute inset-0 rounded-full animate-ping" style={{ background: '#FF3D7F', opacity: 0.45 }} />
+                    <span className="relative">{badge}</span>
+                  </span>
+                )}
               </span>
               <span className="font-sans text-[11px] leading-none transition-colors duration-200"
                 style={{ color: active ? color : '#9A9CB0', fontWeight: active ? 700 : 500 }}>
@@ -1153,6 +1179,13 @@ function ParentPayouts({ userId }) {
   const [proofs, setProofs] = useState({});
   const [loading, setLoading] = useState(true);
   const [burst, setBurst] = useState(null);
+  const celebrate = useCelebrate();
+  const prevClaimedRef = useRef(0);
+  useEffect(() => {
+    const c = bonuses.filter(b => b.status === 'claimed').length;
+    if (prevClaimedRef.current > 0 && c === 0) celebrate({ word: 'ALL CLEAR!', color: '#46E5A0' });
+    prevClaimedRef.current = c;
+  }, [bonuses]);
   const [managing, setManaging] = useState(false);
   const [newLabel, setNewLabel] = useState('');
   const [newAmount, setNewAmount] = useState('');
@@ -1268,7 +1301,8 @@ function ParentPayouts({ userId }) {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex-1">
                           <p className="font-sans text-sm text-ghost">{b.label}</p>
-                          <p className="font-sans text-xs" style={{ color: (b.status === 'paid' || b.status === 'verified') ? '#46E5A0' : claimed ? '#FFC23C' : '#9A9CB0' }}>
+                          <p className="font-sans text-xs flex items-center gap-1" style={{ color: (b.status === 'paid' || b.status === 'verified') ? '#46E5A0' : claimed ? '#FFC23C' : '#9A9CB0' }}>
+                            {claimed && <span className="inline-block w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: '#FFC23C' }} />}
                             {b.status === 'paid' ? 'Paid' : b.status === 'verified' ? 'Verified · ready to pay' : 'Claimed — needs review'}
                           </p>
                         </div>
@@ -1515,6 +1549,8 @@ function ParentAthletes({ userId, wide }) {
   const [notes, setNotes] = useState({});
   const [loading, setLoading] = useState(true);
   const [reveal, setReveal] = useState(false);
+  const celebrate = useCelebrate();
+  const prevPendingRef = useRef(null);
   const weekStart = weekDates()[0];
   const active = useActiveChallenge();
 
@@ -1524,9 +1560,12 @@ function ParentAthletes({ userId, wide }) {
     const { data: lb } = await supabase.rpc('get_leaderboard');
     setBoard(lb || []);
     const wk = weekDates();
-    let wq = supabase.from('daily_entries').select('id, kid_id, entry_date').gte('entry_date', wk[0]);
+    let wq = supabase.from('daily_entries').select('id, kid_id, entry_date, status').gte('entry_date', wk[0]);
     if (active && active.challenge) wq = wq.eq('challenge_id', active.challenge.id);
     const { data: wdes } = await wq;
+    const pendingNow = (wdes || []).filter(e => e.status !== 'approved').length;
+    if (prevPendingRef.current != null && prevPendingRef.current > 0 && pendingNow === 0) celebrate({ word: 'ALL CLEAR!', color: '#46E5A0' });
+    prevPendingRef.current = pendingNow;
     const ids = (wdes || []).map(e => e.id);
     const cByEntry = {};
     if (ids.length) {
