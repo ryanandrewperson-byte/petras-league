@@ -735,6 +735,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
+    { title: 'Spot bonuses', blurb: 'Commanders can drop a surprise reward anytime from Payouts \u2014 it lands with a flash on the athlete\u2019s screen and counts toward their payout.' },
     { title: 'Wins feed', blurb: 'Open the menu \u2192 Wins to see the whole family\u2019s badges, power-ups, and streaks roll in. Tap a reaction to cheer, and post a shoutout anytime.' },
     { title: 'Badges', blurb: 'Earn medallions for streaks, perfect days, power-ups, and more. Check your shelf on your Profile and tap \u201CSee all\u201D for the full set \u2014 they pop when you unlock one.' },
     { title: 'Profiles are here', blurb: 'Open the menu \u2192 Profile to set your photo, codename, hero color, goals, and birthday. Everyone in the family can see each other\u2019s hero card.' },
@@ -965,6 +966,44 @@ function Badges({ userId, accent, isOwn = false }) {
 }
 
 /* ---------- Wins feed (Phase 2) ---------- */
+function SpotBonusFlash({ bonus, onDone }) {
+  useEffect(() => { const t = setTimeout(onDone, 4200); return () => clearTimeout(t); }, [onDone]);
+  return (
+    <div className="fixed inset-0 z-[95] flex items-center justify-center bg-ink/85 backdrop-blur-sm p-6" onClick={onDone}>
+      <style>{`@keyframes spotPop{0%{transform:scale(.3) rotate(-8deg);opacity:0}55%{transform:scale(1.08) rotate(3deg);opacity:1}100%{transform:scale(1) rotate(0)}}`}</style>
+      <div className="relative rounded-3xl p-7 text-center max-w-xs w-full overflow-hidden"
+        style={{ background: 'linear-gradient(150deg, #2a210a, #15151c)', border: '2px solid #FFC23C', boxShadow: '0 0 50px -10px rgba(255,194,60,.6)', animation: 'spotPop .55s cubic-bezier(.2,.8,.3,1) both' }}>
+        <div className="absolute -top-16 -right-16 w-44 h-44 rounded-full" style={{ background: 'radial-gradient(circle, rgba(255,194,60,.35), transparent 65%)' }} />
+        <span className="relative inline-flex items-center gap-1.5 font-display tracking-wide text-ink px-3 py-1 rounded-lg" style={{ background: '#FFC23C', fontSize: '14px' }}><Zap size={14} /> SPOT BONUS</span>
+        <p className="relative font-display tracking-wide mt-4" style={{ color: '#FFC23C', fontSize: '52px', lineHeight: 1 }}>+${bonus.amount}</p>
+        <p className="relative font-sans text-ghost text-sm mt-3">"{bonus.label}"</p>
+        <p className="relative font-sans text-muted text-xs mt-4 uppercase tracking-wider">Surprise from a parent</p>
+      </div>
+    </div>
+  );
+}
+function SpotBonusReveal({ userId }) {
+  const [reveal, setReveal] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data } = await supabase.from('bonuses').select('id, label, amount').eq('kid_id', userId).eq('spot', true).in('status', ['verified', 'paid']);
+      if (!alive) return;
+      const ids = (data || []).map((b) => b.id);
+      const key = `pl_spot_seen_${userId}`;
+      let seen = null;
+      try { seen = JSON.parse(localStorage.getItem(key) || 'null'); } catch {}
+      if (!seen) { try { localStorage.setItem(key, JSON.stringify(ids)); } catch {} return; }
+      const seenSet = new Set(seen);
+      const fresh = (data || []).filter((b) => !seenSet.has(b.id));
+      if (fresh.length) { setReveal(fresh[0]); try { localStorage.setItem(key, JSON.stringify(ids)); } catch {} }
+    })();
+    return () => { alive = false; };
+  }, [userId]);
+  if (!reveal) return null;
+  return <SpotBonusFlash bonus={reveal} onDone={() => setReveal(null)} />;
+}
+
 const REACTIONS = ['🔥', '👏', '💪', '❤️', '👑'];
 
 function FeedProof({ path }) {
@@ -1002,10 +1041,10 @@ function ReactionBar({ targetKey, reactions, onToggle }) {
 }
 
 function FeedCard({ item, reactions, onToggle }) {
-  const shout = item.type === 'shoutout';
+  const special = item.type === 'shoutout' || item.type === 'spot';
   return (
     <div className="border rounded-2xl overflow-hidden"
-      style={{ borderColor: shout ? 'rgba(255,194,60,.4)' : 'rgba(255,255,255,.07)', background: shout ? 'linear-gradient(160deg, rgba(255,194,60,.08), #15151C)' : '#15151C' }}>
+      style={{ borderColor: special ? 'rgba(255,194,60,.4)' : 'rgba(255,255,255,.07)', background: special ? 'linear-gradient(160deg, rgba(255,194,60,.08), #15151C)' : '#15151C' }}>
       <div className="flex gap-2.5 p-3 pb-2.5">
         <div className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-ink text-base shrink-0 overflow-hidden" style={{ background: item.color }}>
           {item.avatar ? <img src={item.avatar} alt="" className="w-full h-full object-cover" /> : item.initial}
@@ -1082,19 +1121,29 @@ function WinsPage({ userId, accent }) {
     });
 
     // Power-ups (verified/paid) with proof photos
-    const { data: bs } = await supabase.from('bonuses').select('id, kid_id, label, amount, status, verified_at').in('status', ['verified', 'paid']).not('verified_at', 'is', null);
+    const { data: bs } = await supabase.from('bonuses').select('id, kid_id, label, amount, status, verified_at, spot').in('status', ['verified', 'paid']).not('verified_at', 'is', null);
     const { data: prs } = await supabase.from('proofs').select('ref_id, storage_path').eq('ref_type', 'bonus');
     const proofBy = {}; (prs || []).forEach((p) => { proofBy[p.ref_id] = p.storage_path; });
     (bs || []).forEach((b) => {
       const k = pById[b.kid_id]; if (!k) return;
-      out.push({
-        key: `powerup:${b.id}`, type: 'powerup', ts: new Date(b.verified_at),
-        color: k.hero_color, initial: nameOf(k)[0], avatar: k.avatar_url,
-        line: <span><b className="font-display tracking-wide">{nameOf(k)}</b> earned a power-up: <b style={{ color: k.hero_color }}>{b.label}</b></span>,
-        sub: `+$${b.amount}`,
-        icon: <Zap size={20} style={{ color: '#FF4D6D' }} />,
-        proofPath: proofBy[b.id] || null,
-      });
+      if (b.spot) {
+        out.push({
+          key: `powerup:${b.id}`, type: 'spot', ts: new Date(b.verified_at),
+          color: '#FFC23C', initial: nameOf(k)[0], avatar: k.avatar_url,
+          line: <span><b className="font-display tracking-wide">{nameOf(k)}</b> got a <b style={{ color: '#FFC23C' }}>spot bonus</b>: {b.label}</span>,
+          sub: `Surprise · +$${b.amount}`,
+          icon: <Zap size={20} style={{ color: '#FFC23C' }} />,
+        });
+      } else {
+        out.push({
+          key: `powerup:${b.id}`, type: 'powerup', ts: new Date(b.verified_at),
+          color: k.hero_color, initial: nameOf(k)[0], avatar: k.avatar_url,
+          line: <span><b className="font-display tracking-wide">{nameOf(k)}</b> earned a power-up: <b style={{ color: k.hero_color }}>{b.label}</b></span>,
+          sub: `+$${b.amount}`,
+          icon: <Zap size={20} style={{ color: '#FF4D6D' }} />,
+          proofPath: proofBy[b.id] || null,
+        });
+      }
     });
 
     // Badge unlocks (derived with dates)
@@ -1596,6 +1645,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
           <TabBar isParent={isParent} tab={tab} setTab={setTab} color={accent} attn={attn} season={season} pushX={navOpen ? NAV_W : null} />}
         {showProfile && <ProfileSheet profile={profile} userId={userId} isParent={isParent} onClose={() => setShowProfile(false)} />}
         {showGuide && <GuideSheet isParent={isParent} onClose={() => setShowGuide(false)} />}
+        {!isParent && <SpotBonusReveal userId={userId} />}
       </div>
     </div>
   );
@@ -2225,6 +2275,10 @@ function ParentPayouts({ userId }) {
   const [editAmount, setEditAmount] = useState('');
   const [confirmId, setConfirmId] = useState(null);
   const active = useActiveChallenge();
+  const [spotTarget, setSpotTarget] = useState('');
+  const [spotAmount, setSpotAmount] = useState('');
+  const [spotReason, setSpotReason] = useState('');
+  const [dropping, setDropping] = useState(false);
 
   const load = async () => {
     const { data: lb } = await supabase.rpc('get_leaderboard');
@@ -2251,6 +2305,21 @@ function ParentPayouts({ userId }) {
     setNewLabel(''); setNewAmount(''); setNewTarget('all');
     await load();
     setAdding(false);
+  };
+
+  const dropSpot = async () => {
+    const amount = Number(spotAmount);
+    const reason = spotReason.trim();
+    if (!spotTarget || !amount || !reason || !active?.challenge) return;
+    setDropping(true);
+    await supabase.from('bonuses').insert({
+      kid_id: spotTarget, label: reason, amount, status: 'verified', spot: true,
+      verified_by: userId, verified_at: new Date().toISOString(), challenge_id: active.challenge.id,
+    });
+    setSpotTarget(''); setSpotAmount(''); setSpotReason('');
+    setDropping(false);
+    celebrate({ word: 'BOOM!', color: '#FFC23C' });
+    await load();
   };
 
   const saveEdit = async (b) => {
@@ -2299,6 +2368,37 @@ function ParentPayouts({ userId }) {
       <p className="font-sans text-sm mb-5" style={{ color: claimedCount ? '#FFC23C' : '#9A9CB0' }}>
         {claimedCount ? `${claimedCount} power-up${claimedCount > 1 ? 's' : ''} claimed and waiting on you.` : 'No power-ups waiting for review.'}
       </p>
+
+      <div className="mb-6 rounded-2xl p-4 border" style={{ borderColor: 'rgba(255,194,60,.4)', background: 'linear-gradient(160deg, rgba(255,194,60,.08), #15151C)' }}>
+        <div className="flex items-center gap-2 mb-2">
+          <Zap size={18} style={{ color: '#FFC23C' }} />
+          <p className="font-display text-lg tracking-wide" style={{ color: '#FFC23C' }}>Drop a spot bonus</p>
+        </div>
+        <p className="font-sans text-muted text-xs mb-3">A surprise reward, instantly earned — it pops on their screen and counts toward their payout.</p>
+        <div className="flex flex-wrap gap-2 mb-2">
+          {board.map((kid) => (
+            <button key={kid.kid_id} onClick={() => setSpotTarget(kid.kid_id)} className="px-3 py-1.5 rounded-lg font-sans text-xs font-semibold"
+              style={{ background: spotTarget === kid.kid_id ? kid.hero_color : '#20212B', color: spotTarget === kid.kid_id ? '#0B0B0F' : '#F4F5FA' }}>
+              {kid.full_name}
+            </button>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <div className="relative w-24 shrink-0">
+            <span className="absolute left-3 top-1/2 font-sans text-sm text-muted" style={{ transform: 'translateY(-50%)' }}>$</span>
+            <input value={spotAmount} onChange={(e) => setSpotAmount(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" placeholder="5"
+              className="w-full bg-raised rounded-lg pl-7 pr-2 py-2 font-sans text-sm text-ghost outline-none" />
+          </div>
+          <input value={spotReason} onChange={(e) => setSpotReason(e.target.value)} placeholder="Reason — e.g. helped without being asked"
+            className="flex-1 min-w-0 bg-raised rounded-lg px-3 py-2 font-sans text-sm text-ghost outline-none" />
+        </div>
+        <button onClick={dropSpot} disabled={dropping || !spotTarget || !spotAmount || !spotReason.trim()}
+          className="mt-3 w-full py-2.5 rounded-lg font-display text-lg tracking-wide disabled:opacity-40 flex items-center justify-center gap-1.5"
+          style={{ background: '#FFC23C', color: '#0B0B0F' }}>
+          <Zap size={16} /> {dropping ? 'Dropping…' : 'Drop it'}
+        </button>
+      </div>
+
       {board.map(kid => {
         const champ = kid.rank === 1 && kid.week_points > 0 ? kid.champion_bonus : 0;
         const weekTotal = kid.allowance + champ;
