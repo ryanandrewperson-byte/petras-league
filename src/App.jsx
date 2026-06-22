@@ -544,6 +544,7 @@ const HUB_PAGES = [
   { id: 'challenge', label: 'The Challenge', sub: 'Daily check-ins & league', Icon: Trophy },
   { id: 'profile', label: 'Profile', sub: 'Your hero card', Icon: User },
   { id: 'wins', label: 'Wins', sub: 'Family wins & shoutouts', Icon: Megaphone },
+  { id: 'calendar', label: 'Calendar', sub: 'Family schedule', Icon: Calendar },
   { id: 'whatsnew', label: "What's New", sub: 'Latest feature updates', Icon: Sparkles },
   { id: 'settings', label: 'Settings', sub: 'Preferences & accents', Icon: Settings },
 ];
@@ -692,6 +693,149 @@ function CornerFlag({ palette, size = 48 }) {
   );
 }
 
+/* ---------- Calendar (Phase 3) ---------- */
+const CAL_CATS = { challenge: { color: '#3DE8C0', label: 'Challenge' }, family: { color: '#FF4D6D', label: 'Family' }, league: { color: '#FFC23C', label: 'League' } };
+const CAL_DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
+function calYmd(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function calWeekOf(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const mon = new Date(d); mon.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return Array.from({ length: 7 }, (_, i) => { const x = new Date(mon); x.setDate(mon.getDate() + i); return calYmd(x); });
+}
+function calMonthWeeks(year, m) {
+  const first = new Date(year, m, 1);
+  const lead = (first.getDay() + 6) % 7;
+  const daysInMonth = new Date(year, m + 1, 0).getDate();
+  const rows = Math.ceil((lead + daysInMonth) / 7);
+  const start = new Date(year, m, 1 - lead);
+  const weeks = [];
+  let cur = new Date(start);
+  for (let w = 0; w < rows; w++) { const row = []; for (let i = 0; i < 7; i++) { row.push(new Date(cur)); cur.setDate(cur.getDate() + 1); } weeks.push(row); }
+  return weeks;
+}
+
+function CalendarPage({ accent }) {
+  const active = useActiveChallenge();
+  const today = todayKey();
+  const [sel, setSel] = useState(today);
+  const [cursor, setCursor] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
+  const [open, setOpen] = useState(false);
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    if (!active) return;
+    const evs = [];
+    if (active.challenge) {
+      const s = active.challenge.start_date, e = active.challenge.end_date;
+      evs.push({ date: s, title: `${active.challenge.name} starts`, cat: 'challenge', time: '' });
+      evs.push({ date: e, title: `${active.challenge.name} ends`, cat: 'challenge', time: '' });
+      let d = new Date(s + 'T00:00:00'); const end = new Date(e + 'T00:00:00');
+      while (d <= end) {
+        const dow = (d.getDay() + 6) % 7, ds = calYmd(d);
+        if (dow === 0 && ds !== s) evs.push({ date: ds, title: 'New week starts', cat: 'challenge', time: '' });
+        if (dow === 6) { evs.push({ date: ds, title: 'Payday', cat: 'league', time: 'EOD' }); evs.push({ date: ds, title: 'Champion crowned', cat: 'league', time: 'EOD' }); }
+        d.setDate(d.getDate() + 1);
+      }
+    }
+    setEvents(evs);
+    (async () => {
+      try {
+        const res = await fetch('/api/calendar');
+        if (!res.ok) return;
+        const data = await res.json();
+        const list = Array.isArray(data) ? data : (data.events || []);
+        const fam = list.map((x) => ({ date: x.date, title: x.title, time: x.time || '', cat: 'family' })).filter((x) => x.date && x.title);
+        if (fam.length) setEvents((prev) => [...prev, ...fam]);
+      } catch {}
+    })();
+  }, [active]);
+
+  const byDate = {};
+  events.forEach((e) => { (byDate[e.date] = byDate[e.date] || []).push(e); });
+  const catsOn = (ds) => { const set = new Set((byDate[ds] || []).map((e) => e.cat)); return ['challenge', 'family', 'league'].filter((c) => set.has(c)); };
+  const week = calWeekOf(sel);
+  const selEvents = (byDate[sel] || []).slice().sort((a, b) => (a.time || 'zzz').localeCompare(b.time || 'zzz'));
+  const selD = new Date(sel + 'T00:00:00');
+  const monthLabel = cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const Dot = ({ c }) => <i style={{ width: 5, height: 5, borderRadius: '50%', background: CAL_CATS[c].color }} />;
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="font-display text-3xl tracking-wide text-ghost">Calendar</h2>
+        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1.5 font-display text-base tracking-wide text-muted">
+          {monthLabel}
+          <span className="w-6 h-6 rounded-md bg-raised flex items-center justify-center"><ChevronDown size={14} style={{ color: '#9A9CB0', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .2s' }} /></span>
+        </button>
+      </div>
+
+      {/* week strip */}
+      <div className="grid grid-cols-7 gap-1">
+        {week.map((ds) => {
+          const d = new Date(ds + 'T00:00:00');
+          const isToday = ds === today, isSel = ds === sel;
+          return (
+            <button key={ds} onClick={() => setSel(ds)} className="rounded-xl py-1.5 flex flex-col items-center"
+              style={{ background: isToday ? accent : 'transparent', boxShadow: isSel && !isToday ? `inset 0 0 0 1.5px ${accent}` : 'none' }}>
+              <span style={{ fontSize: '9px', textTransform: 'uppercase', letterSpacing: '.04em', color: isToday ? 'rgba(11,11,15,.7)' : '#6E7080' }}>{CAL_DOW[(d.getDay() + 6) % 7]}</span>
+              <span className="font-display" style={{ fontSize: '17px', lineHeight: 1.2, color: isToday ? '#0B0B0F' : '#F4F5FA' }}>{d.getDate()}</span>
+              <span className="flex gap-0.5 mt-0.5 items-center" style={{ height: 6 }}>{catsOn(ds).map((c) => <Dot key={c} c={c} />)}</span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* month expand */}
+      {open && (
+        <div className="mt-3 pt-3 border-t border-white/10">
+          <div className="flex items-center justify-between mb-2">
+            <button onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() - 1, 1))} className="w-7 h-7 rounded-md bg-raised flex items-center justify-center"><ChevronRight size={15} style={{ color: '#9A9CB0', transform: 'rotate(180deg)' }} /></button>
+            <span className="font-display text-base tracking-wide text-ghost">{monthLabel}</span>
+            <button onClick={() => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + 1, 1))} className="w-7 h-7 rounded-md bg-raised flex items-center justify-center"><ChevronRight size={15} style={{ color: '#9A9CB0' }} /></button>
+          </div>
+          <div className="grid grid-cols-7 mb-1">{CAL_DOW.map((l, i) => <span key={i} className="text-center" style={{ fontSize: '9px', color: '#6E7080', textTransform: 'uppercase' }}>{l}</span>)}</div>
+          <div className="grid grid-cols-7 gap-1">
+            {calMonthWeeks(cursor.getFullYear(), cursor.getMonth()).flat().map((d) => {
+              const ds = calYmd(d);
+              const inMonth = d.getMonth() === cursor.getMonth();
+              const isToday = ds === today, isSel = ds === sel;
+              return (
+                <button key={ds} onClick={() => setSel(ds)} className="rounded-lg flex flex-col items-center justify-center relative" style={{ aspectRatio: '1', background: isToday ? accent : 'transparent', boxShadow: isSel && !isToday ? `inset 0 0 0 1.5px ${accent}` : 'none' }}>
+                  <span style={{ fontSize: '12px', color: isToday ? '#0B0B0F' : inMonth ? '#F4F5FA' : '#6E7080', fontWeight: isToday ? 700 : 400 }}>{d.getDate()}</span>
+                  <span className="flex gap-0.5 absolute" style={{ bottom: 4 }}>{catsOn(ds).map((c) => <i key={c} style={{ width: 4, height: 4, borderRadius: '50%', background: isToday ? 'rgba(11,11,15,.5)' : CAL_CATS[c].color }} />)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* day detail */}
+      <div className="mt-5">
+        <p className="font-sans text-xs uppercase tracking-wider text-muted mb-2">{selD.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+        {selEvents.length === 0
+          ? <p className="font-sans text-muted text-sm">Nothing scheduled.</p>
+          : selEvents.map((e, i) => {
+              const cat = CAL_CATS[e.cat];
+              return (
+                <div key={i} className="flex items-center gap-3 bg-panel border border-white/10 rounded-xl px-3 py-2.5 mb-2">
+                  <div className="self-stretch rounded-full" style={{ width: 3, background: cat.color }} />
+                  {e.time && <span className="font-display text-sm tracking-wide text-muted shrink-0" style={{ width: 46 }}>{e.time}</span>}
+                  <span className="font-sans text-sm text-ghost flex-1">{e.title}</span>
+                  <span className="font-sans uppercase tracking-wide font-bold shrink-0" style={{ fontSize: '9px', padding: '2px 7px', borderRadius: 20, background: `${cat.color}28`, color: cat.color }}>{cat.label}</span>
+                </div>
+              );
+            })}
+      </div>
+
+      <div className="flex gap-4 justify-center mt-5">
+        {Object.entries(CAL_CATS).map(([k, v]) => <span key={k} className="flex items-center gap-1.5 font-sans text-muted" style={{ fontSize: '11px' }}><i style={{ width: 8, height: 8, borderRadius: '50%', background: v.color }} />{v.label}</span>)}
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({ accent, profile, isParent }) {
   const [seasonal, setSeasonal] = useState(getSeasonalOn);
   const toggleSeasonal = () => {
@@ -735,6 +879,7 @@ function SettingsPage({ accent, profile, isParent }) {
 // Newest first. User-facing features only — keep architecture/scale notes off this list.
 const WHATS_NEW = [
   { date: 'June 21, 2026', items: [
+    { title: 'Calendar', blurb: 'Open the menu \u2192 Calendar for the family schedule \u2014 this week at a glance, tap to expand the month, and color-coded dots for challenge, family, and league days.' },
     { title: 'Your money, your bank', blurb: 'The My Day money bag fills through the week and bursts into a payday at a perfect week. Tap it \u2014 or the Week / Month / Challenge switch \u2014 to see everything you\u2019ve banked.' },
     { title: 'Spot bonuses', blurb: 'Commanders can drop a surprise reward anytime from Payouts \u2014 it lands with a flash on the athlete\u2019s screen and counts toward their payout.' },
     { title: 'Wins feed', blurb: 'Open the menu \u2192 Wins to see the whole family\u2019s badges, power-ups, and streaks roll in. Tap a reaction to cheer, and post a shoutout anytime.' },
@@ -1621,6 +1766,8 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                   ? <ProfilePage userId={userId} accent={accent} isOwn />
                 : page === 'wins'
                   ? <WinsPage userId={userId} accent={accent} />
+                : page === 'calendar'
+                  ? <CalendarPage accent={accent} />
                 : page === 'whatsnew'
                   ? <WhatsNewPage accent={accent} />
                   : <>
