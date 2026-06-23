@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, createContext, useContext, useCallback } from 'react';
-import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles, User, Camera, Cake, Star, Medal, Megaphone, Send } from 'lucide-react';
+import { Shield, Lock, LogOut, Check, Trophy, Crown, ListChecks, Users, Zap, Wallet, Paperclip, Eye, EyeOff, Pencil, Trash2, Plus, Calendar, ChevronRight, GripVertical, LayoutDashboard, HelpCircle, Activity, X, RefreshCw, ChevronDown, Flame, TrendingUp, Menu, Settings, Sparkles, User, Camera, Cake, Star, Medal, Megaphone, Send, Smartphone } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 function todayKey() {
@@ -3197,8 +3197,8 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
     }
   }, [fillPct, userId, weekStart]);
   const earnings = useKidEarnings(userId);
-  const [bankView, setBankView] = useState('week');
   const [bankOpen, setBankOpen] = useState(false);
+  const hero = profile.hero_color;
   const todayPts = weekPts[today] || 0;
   const phone = phoneStatus(todayPts, dailyMax);
   const champ = board && board.rank === 1 && board.week_points > 0;
@@ -3214,71 +3214,76 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
   const paceProjected = Math.round((paceTotal / (paceTodayIdx + 1)) * 7);
   const pace = allowanceFromTiers(paceProjected, dailyMax * 7, tiers);
   const nt = pace > 0 ? null : nextTier(paceTotal, dailyMax * 7, tiers);
-  const monthKey = new Date().toISOString().slice(0, 7);
   const weekTotals = { allowance, champ: champBonus, power: powerTotal, total: grand };
-  const seg = bankView === 'week' ? weekTotals : periodTotals(earnings, bankView, weekStart, monthKey);
+
+  // ----- Phone = today's horizontal meter (parked -> 1hr -> 2hr -> unlimited) -----
+  const dailyPct = dailyMax ? Math.min(1, todayPts / dailyMax) : 0;
+  const phoneShort = phone.tone === 'good' ? 'UNLIMITED' : phone.tone === 'ok' ? '2 HOURS' : phone.tone === 'warn' ? '1 HOUR' : 'PARKED';
+  const phoneColor = toneColor(phone.tone);
+  const phoneTiers = [{ min: 0.4, label: '1 hour' }, { min: 0.6, label: '2 hours' }, { min: 0.8, label: 'unlimited phone' }];
+  const nextPhone = phoneTiers.find(t => t.min > dailyPct + 1e-9);
+  const phoneNeed = nextPhone ? Math.max(1, Math.ceil(nextPhone.min * dailyMax) - todayPts) : 0;
+
+  // ----- Streak treatment for the header -----
+  const flameColor = streak >= 30 ? '#7CC5FF' : streak >= 14 ? '#FF3D3D' : streak >= 7 ? '#FF7A1A' : '#FFA53C';
 
   return (
-    <div className="relative bg-panel rounded-2xl p-4 mb-4" style={{ borderLeft: `4px solid ${profile.hero_color}` }}>
-      {dailyMax > 0 && todayPts === dailyMax && <div className="absolute -top-3 -right-2 z-10"><Burst color={profile.hero_color} label="POW!" /></div>}
-      <div className="flex items-center gap-2 mb-3">
-        <div className="w-9 h-9 rounded-lg flex items-center justify-center font-display text-ink text-lg" style={{ background: profile.hero_color }}>{profile.full_name[0]}</div>
+    <div className="relative bg-panel rounded-2xl p-4 mb-4" style={{ borderLeft: `4px solid ${hero}` }}>
+      {dailyMax > 0 && todayPts === dailyMax && <div className="absolute -top-3 left-2 z-10"><Burst color={hero} label="POW!" /></div>}
+
+      {/* Header: identity + streak on the left, tappable money bag on the right */}
+      <div className="flex items-start gap-3 mb-3">
+        <div className="w-12 h-12 rounded-xl flex items-center justify-center font-display text-ink text-2xl shrink-0" style={{ background: hero }}>{profile.full_name[0]}</div>
         <div className="flex-1 min-w-0">
-          <p className="font-display text-lg tracking-wide leading-none flex items-center gap-1.5" style={{ color: profile.hero_color }}>
-            <span className="truncate">{profile.full_name}</span>
-            {champ && <Crown size={15} className="crown-drop shrink-0" style={{ color: '#FFC23C' }} />}
-            <StreakFlame streak={streak} />
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-display text-2xl tracking-wide leading-none" style={{ color: hero }}>{profile.full_name}</span>
+            {champ && <Crown size={16} className="crown-drop shrink-0" style={{ color: '#FFC23C' }} />}
+            {streak >= 3 && (
+              <span className="inline-flex items-center gap-1 shrink-0">
+                <Flame size={14} className="flame-flicker" style={{ color: flameColor }} />
+                <span className="font-display tracking-wide" style={{ color: '#FFC23C', fontSize: '13px' }}>{streak}-DAY STREAK</span>
+              </span>
+            )}
+          </div>
+          <p className="font-sans text-muted" style={{ fontSize: '13px', marginTop: '4px' }}>
+            Rank #{board ? board.rank : '\u2014'}{pace > 0 ? ` \u00b7 on pace $${pace}` : nt ? ` \u00b7 $${nt.amount} at ${nt.ptsNeeded} more pts` : ''}
           </p>
-          <p className="font-sans" style={{ fontSize: '11px', color: toneColor(phone.tone) }}>{phone.label} · today {todayPts}/{dailyMax}</p>
         </div>
-      </div>
-
-      <div className="relative mb-3 bg-raised rounded-xl p-4 flex flex-col items-center text-center">
-        <div className="absolute top-3 right-3 text-right">
-          <p className="font-sans text-muted" style={{ fontSize: '9px' }}>RANK</p>
-          <p className="font-display text-lg leading-none" style={{ color: profile.hero_color }}>#{board ? board.rank : '—'}</p>
-        </div>
-        <p className="font-sans text-muted uppercase tracking-wider mb-1" style={{ fontSize: '10px' }}>This week</p>
-        <button onClick={() => setBankOpen(true)} className="appearance-none bg-transparent border-0 p-0 cursor-pointer" aria-label="Open my bank">
-          <WeeklyMoneyBag pct={fillPct} color={profile.hero_color} />
+        <button onClick={() => setBankOpen(true)} className="appearance-none bg-transparent border-0 p-0 cursor-pointer flex flex-col items-center shrink-0" aria-label="Open my bank">
+          <WeeklyMoneyBag pct={fillPct} color={hero} size={56} />
+          <span className="font-display leading-none" style={{ color: hero, fontSize: '20px', marginTop: '2px' }}>${grand}</span>
         </button>
-        <p className="font-display leading-none mt-1" style={{ color: profile.hero_color, fontSize: '40px' }}>${grand}</p>
-        <p className="font-sans text-muted" style={{ fontSize: '11px', marginTop: '3px' }}>allowance ${allowance}{champBonus ? ` · champ +$${champBonus}` : ''}{powerTotal ? ` · power-ups +$${powerTotal}` : ''}</p>
-        {pace > 0 && (
-          <p className="font-sans flex items-center gap-1 mt-1.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
-            <TrendingUp size={11} /> On pace for ${pace} this week
-          </p>
-        )}
-        {pace === 0 && nt && (
-          <p className="font-sans flex items-center gap-1 mt-1.5" style={{ fontSize: '11px', fontWeight: 600, color: profile.hero_color }}>
-            <TrendingUp size={11} /> {nt.ptsNeeded} pts to unlock ${nt.amount}
-          </p>
-        )}
       </div>
 
-      <div className="mb-3">
-        <div className="flex bg-raised rounded-xl p-1 gap-1 mb-2">
-          {[['week', 'Week'], ['month', 'Month'], ['challenge', 'Challenge']].map(([k, lbl]) => (
-            <button key={k} onClick={() => setBankView(k)} className="flex-1 py-1.5 rounded-lg font-sans text-xs font-bold transition-colors"
-              style={{ background: bankView === k ? profile.hero_color : 'transparent', color: bankView === k ? '#0B0B0F' : '#9A9CB0' }}>{lbl}</button>
-          ))}
+      {/* Phone today = the immediate daily carrot, sitting on top of the task list */}
+      {dailyMax > 0 && (
+        <div className="bg-raised rounded-xl p-3.5 mb-3">
+          <div className="flex items-center justify-between mb-2.5">
+            <span className="font-sans uppercase tracking-wider flex items-center gap-1.5" style={{ fontSize: '12px', fontWeight: 700, color: '#9A9CB0' }}>
+              <Smartphone size={14} /> Phone today
+            </span>
+            <span className="font-display tracking-wide" style={{ color: phoneColor, fontSize: '20px' }}>{phoneShort}</span>
+          </div>
+          <div className="relative rounded-full overflow-hidden" style={{ height: 11, background: '#2a2b35' }}>
+            <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.max(4, dailyPct * 100)}%`, background: `linear-gradient(90deg, #46E5A0, ${hero})` }} />
+          </div>
+          <div className="flex justify-between mt-1.5" style={{ fontSize: '11px', color: '#9A9CB0' }}>
+            <span>parked</span><span>1hr</span><span>2hr</span><span>unlimited</span>
+          </div>
+          {nextPhone
+            ? <p className="font-sans mt-2.5" style={{ fontSize: '14px', color: '#F4F5FA' }}><b style={{ color: hero }}>{phoneNeed} more task{phoneNeed > 1 ? 's' : ''}</b> \u2192 <b style={{ color: hero }}>{nextPhone.label}</b> today</p>
+            : <p className="font-sans mt-2.5" style={{ fontSize: '14px', color: hero, fontWeight: 600 }}>Phone unlocked for today \ud83c\udf89</p>}
         </div>
-        <div className="bg-raised rounded-xl px-4 py-3">
-          {bankView !== 'week' && !earnings
-            ? <p className="font-sans text-muted text-sm">Adding it up…</p>
-            : <>
-                <p className="font-display leading-none" style={{ color: profile.hero_color, fontSize: '28px' }}>${seg.total}</p>
-                <p className="font-sans text-muted" style={{ fontSize: '10px', marginTop: '3px' }}>allowance ${seg.allowance}{seg.champ ? ` · champ $${seg.champ}` : ''}{seg.power ? ` · power-ups $${seg.power}` : ''}</p>
-              </>}
-        </div>
-      </div>
-      {payday && <PaydayBurst amount={grand} color={profile.hero_color} onDone={() => setPayday(false)} />}
-      {bankOpen && <BankSheet earnings={earnings} weekTotals={weekTotals} color={profile.hero_color} challengeName={null} onClose={() => setBankOpen(false)} />}
+      )}
 
-      <WeekStrip points={weekPts} color={profile.hero_color} dailyMax={dailyMax} tiers={tiers} onSelectDay={(d) => setSelDay(s => s === d ? null : d)} selectedDate={selDay} />
+      {payday && <PaydayBurst amount={grand} color={hero} onDone={() => setPayday(false)} />}
+      {bankOpen && <BankSheet earnings={earnings} weekTotals={weekTotals} color={hero} challengeName={null} onClose={() => setBankOpen(false)} />}
+
+      {/* Week navigator + today's checklist (the task list the phone meter sits on top of) */}
+      <WeekStrip points={weekPts} color={hero} dailyMax={dailyMax} tiers={tiers} onSelectDay={(d) => setSelDay(s => s === d ? null : d)} selectedDate={selDay} />
       <p className="font-sans text-muted mt-1.5" style={{ fontSize: '10px' }}>{selDay === today ? 'Check off today below. Saves automatically.' : selDay ? 'Tap the day again to close.' : 'Tap a day to see that check-in.'}</p>
 
-      {selDay && <DayPanel kidId={userId} date={selDay} hero_color={profile.hero_color} role="kid" userId={userId} onChanged={onChanged} tasks={tasks} />}
+      {selDay && <DayPanel kidId={userId} date={selDay} hero_color={hero} role="kid" userId={userId} onChanged={onChanged} tasks={tasks} />}
 
       {bonuses.length > 0 && (
         <div className="mt-4">
@@ -3291,10 +3296,10 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
               return (
                 <div key={b.id} className="rounded-lg bg-raised px-2 py-1.5">
                   <div className="flex items-center gap-2">
-                    <Zap size={13} style={{ color: earned ? profile.hero_color : claimed ? '#FFC23C' : '#9A9CB0' }} />
+                    <Zap size={13} style={{ color: earned ? hero : claimed ? '#FFC23C' : '#9A9CB0' }} />
                     <span className="font-sans text-ghost text-sm flex-1">{b.label}</span>
                     <span className="font-sans text-xs" style={{ color: earned ? '#46E5A0' : claimed ? '#FFC23C' : '#9A9CB0' }}>{b.status === 'paid' ? 'Paid' : b.status === 'verified' ? 'Earned!' : claimed ? 'Claimed' : 'Locked'}</span>
-                    <span className="font-display text-sm" style={{ color: profile.hero_color }}>${Number(b.amount)}</span>
+                    <span className="font-display text-sm" style={{ color: hero }}>${Number(b.amount)}</span>
                   </div>
                   {bpath && <div className="mt-1.5"><ProofThumb path={bpath} /></div>}
                 </div>
@@ -3766,7 +3771,7 @@ function MoneyBag({ amount, max = 70, color, ghost = false }) {
 }
 
 // Big My Day bag: fills by weekly completion %, buzzes near the top, full at a perfect week.
-function WeeklyMoneyBag({ pct, color }) {
+function WeeklyMoneyBag({ pct, color, size = 104 }) {
   const [bounce, setBounce] = useState(false);
   const prev = useRef(pct);
   useEffect(() => {
@@ -3788,7 +3793,7 @@ function WeeklyMoneyBag({ pct, color }) {
         @keyframes bagBuzz{0%,100%{transform:translateX(0) rotate(0)}25%{transform:translateX(-1px) rotate(-1.4deg)}75%{transform:translateX(1px) rotate(1.4deg)}}
         .bag-buzz{animation:bagBuzz .18s linear infinite}
       `}</style>
-      <svg viewBox="0 0 48 48" width="104" height="104">
+      <svg viewBox="0 0 48 48" width={size} height={size}>
         <defs><clipPath id={cid}><path d={bag} /></clipPath></defs>
         <path d={bag} fill="#20212B" />
         <rect key={bounce ? 'rise' : 'static'} className={bounce ? 'bag-fill' : ''} x="0" y={48 - 48 * p} width="48" height={48 * p} fill={color} opacity={p >= 1 ? 1 : 0.92} clipPath={`url(#${cid})`} />
