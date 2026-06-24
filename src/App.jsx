@@ -504,6 +504,11 @@ export default function App() {
 
   const isDev = !!session && DEV_EMAILS.includes((session.user.email || '').toLowerCase());
   useEffect(() => { if (isDev) installDevReadOnly(); }, [isDev]);
+  // Phase 5: stamp "last active" on app open (dev account skipped; also no-op'd by the read-only guard)
+  useEffect(() => {
+    if (!session || isDev) return;
+    supabase.from('profiles').update({ last_seen_at: new Date().toISOString() }).eq('id', session.user.id);
+  }, [session, isDev]);
   useEffect(() => {
     if (!isDev) { setMembers([]); return; }
     let active = true;
@@ -538,6 +543,229 @@ export default function App() {
   );
 }
 
+/* ---------- Commander Stats / Analytics (Phase 5) ---------- */
+function StatPill({ status }) {
+  const m = status === 'ok' ? { c: '#46E5A0', bg: 'rgba(70,229,160,.16)', t: 'On track' }
+    : status === 'slip' ? { c: '#FF9F45', bg: 'rgba(255,159,69,.16)', t: 'Slipping' }
+    : { c: '#FF6B7A', bg: 'rgba(255,77,94,.16)', t: 'Cold' };
+  return <span className="font-sans font-bold uppercase ml-auto shrink-0" style={{ fontSize: '9.5px', letterSpacing: '.05em', padding: '4px 9px', borderRadius: 20, background: m.bg, color: m.c }}>{m.t}</span>;
+}
+
+function CommanderStats({ accent }) {
+  const active = useActiveChallenge();
+  const [win, setWin] = useState('challenge');
+  const [data, setData] = useState(null);
+
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    (async () => {
+      setData(null);
+      const today = todayKey();
+      const dToday = new Date(today + 'T00:00:00');
+      const dailyMax = (active.tasks || []).length;
+      let start;
+      if (win === 'week') start = weekDates()[0];
+      else if (win === '30d') { const d = new Date(); d.setDate(d.getDate() - 29); start = ymdOf(d); }
+      else start = active.challenge ? active.challenge.start_date : weekDates()[0];
+      if (active.challenge && start < active.challenge.start_date) start = active.challenge.start_date;
+      const since14 = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 13); return d; })());
+
+      const entQ = (q) => active.challenge ? q.eq('challenge_id', active.challenge.id) : q;
+      const [profRes, entRes, sparkRes, bonusRes, shoutRes, reactRes] = await Promise.all([
+        supabase.from('profiles').select('id, full_name, role, hero_color, codename, sport, avatar_url, last_seen_at'),
+        entQ(supabase.from('daily_entries').select('id, kid_id, entry_date').gte('entry_date', start)),
+        entQ(supabase.from('daily_entries').select('entry_date').gte('entry_date', since14)),
+        supabase.from('bonuses').select('kid_id, status, verified_at'),
+        supabase.from('shoutouts').select('id', { count: 'exact', head: true }),
+        supabase.from('reactions').select('target_key', { count: 'exact', head: true }),
+      ]);
+      const profs = profRes.data || [];
+      const entries = entRes.data || [];
+      const ids = entries.map((e) => e.id);
+      const compByEntry = {};
+      if (ids.length) {
+        const { data: ets } = await supabase.from('entry_tasks').select('entry_id, completed').in('entry_id', ids);
+        (ets || []).forEach((t) => { if (t.completed) compByEntry[t.entry_id] = (compByEntry[t.entry_id] || 0) + 1; });
+      }
+      const kids = profs.filter((p) => p.role === 'kid');
+      const parents = profs.filter((p) => p.role === 'parent');
+
+      const byKid = {};
+      kids.forEach((k) => { byKid[k.id] = { dates: new Set(), completed: 0, perfect: new Set() }; });
+      entries.forEach((e) => {
+        const b = byKid[e.kid_id]; if (!b) return;
+        b.dates.add(e.entry_date);
+        const c = compByEntry[e.id] || 0;
+        b.completed += c;
+        if (dailyMax > 0 && c >= dailyMax) b.perfect.add(e.entry_date);
+      });
+
+      const dStart = new Date(start + 'T00:00:00');
+      const daysElapsed = Math.max(1, Math.round((dToday - dStart) / 86400000) + 1);
+      const available = Math.max(1, dailyMax * daysElapsed);
+
+      const powerByKid = {}; let powerTotal = 0;
+      (bonusRes.data || []).forEach((b) => {
+        if ((b.status === 'verified' || b.status === 'paid') && b.verified_at) { powerByKid[b.kid_id] = true; powerTotal++; }
+      });
+
+      const isToday = (ts) => ts && ymdOf(new Date(ts)) === today;
+      const within = (ts, dd) => ts && (Date.now() - new Date(ts).getTime()) <= dd * 86400000;
+
+      let badgesTotal = 0, paydaysTotal = 0, compSum = 0;
+      const athletes = kids.map((k) => {
+        const b = byKid[k.id];
+        const days = b.dates.size;
+        const streak = streakFromDates(b.dates);
+        const completion = Math.min(100, Math.round((b.completed / available) * 100));
+        compSum += completion;
+        const lastCheckin = days ? [...b.dates].sort().slice(-1)[0] : null;
+        const dSince = lastCheckin ? Math.round((dToday - new Date(lastCheckin + 'T00:00:00')) / 86400000) : null;
+        const status = dSince === null ? 'cold' : dSince <= 1 ? 'ok' : dSince === 2 ? 'slip' : 'cold';
+        const stats = { totalCheckins: days, maxStreak: longestRun(b.dates), anyPerfectDay: b.perfect.size > 0, anyPerfectWeek: hasPerfectWeek([...b.perfect]), hasPowerUp: !!powerByKid[k.id] };
+        badgesTotal += earnedBadges(stats).size;
+        const wk = {}; [...b.perfect].forEach((ds) => { const w = weekMondayOf(ds); wk[w] = (wk[w] || 0) + 1; });
+        paydaysTotal += Object.values(wk).filter((n) => n >= 7).length;
+        return { id: k.id, name: k.codename || k.full_name, color: k.hero_color || accent, avatar: k.avatar_url, lastSeen: k.last_seen_at, days, streak, tasks: b.completed, completion, status, dSince };
+      });
+
+      const sparkDays = Array.from({ length: 14 }, (_, i) => { const x = new Date(); x.setDate(x.getDate() - (13 - i)); return ymdOf(x); });
+      const sparkCounts = sparkDays.map((d) => (sparkRes.data || []).filter((e) => e.entry_date === d).length);
+
+      if (alive) setData({
+        kids: athletes,
+        parents: parents.map((p) => ({ id: p.id, name: p.full_name, lastSeen: p.last_seen_at })),
+        activeToday: kids.filter((k) => isToday(k.last_seen_at)).length,
+        activeWeek: kids.filter((k) => within(k.last_seen_at, 7)).length,
+        totalCheckins: entries.length,
+        avgComplete: kids.length ? Math.round(compSum / kids.length) : 0,
+        sparkCounts, badgesTotal, powerTotal, paydaysTotal,
+        shoutTotal: shoutRes.count || 0, reactTotal: reactRes.count || 0,
+        cold: athletes.filter((a) => a.status === 'cold'),
+        slip: athletes.filter((a) => a.status === 'slip'),
+      });
+    })();
+    return () => { alive = false; };
+  }, [active, win, accent]);
+
+  const ago = (ts) => {
+    if (!ts) return 'no activity yet';
+    const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+    if (s < 60) return 'just now';
+    const m = Math.floor(s / 60); if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`;
+    const dd = Math.floor(h / 24); if (dd < 30) return `${dd}d ago`;
+    return `${Math.floor(dd / 30)}mo ago`;
+  };
+
+  if (!active) return <p className="font-sans text-muted text-sm">Loading stats\u2026</p>;
+  if (!active.challenge) return <ChallengeBreak isParent />;
+
+  const winBtns = [['week', 'Week'], ['challenge', 'Challenge'], ['30d', '30d']];
+
+  return (
+    <div>
+      <div className="flex items-end justify-between mb-4">
+        <div>
+          <h2 className="font-display text-3xl tracking-wide text-ghost leading-none">Stats</h2>
+          <p className="font-sans text-muted text-xs mt-1.5">Family engagement \u00b7 {active.challenge.name}</p>
+        </div>
+        <div className="flex gap-1 bg-raised rounded-xl p-1 shrink-0">
+          {winBtns.map(([k, lbl]) => (
+            <button key={k} onClick={() => setWin(k)} className="font-sans text-xs font-semibold rounded-lg px-2.5 py-1.5 transition-colors"
+              style={{ background: win === k ? accent : 'transparent', color: win === k ? '#0B0B0F' : '#9A9CB0' }}>{lbl}</button>
+          ))}
+        </div>
+      </div>
+
+      {!data ? <p className="font-sans text-muted text-sm">Crunching the numbers\u2026</p> : (
+        <>
+          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Family pulse</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
+            <div className="bg-panel rounded-2xl p-3"><div className="font-display text-2xl leading-none" style={{ color: '#46E5A0' }}>{data.activeToday}/{data.kids.length}</div><div className="font-sans uppercase tracking-wider text-muted mt-1.5" style={{ fontSize: '9.5px' }}>Active today</div></div>
+            <div className="bg-panel rounded-2xl p-3"><div className="font-display text-2xl leading-none" style={{ color: '#29E0FF' }}>{data.activeWeek}/{data.kids.length}</div><div className="font-sans uppercase tracking-wider text-muted mt-1.5" style={{ fontSize: '9.5px' }}>Active this wk</div></div>
+            <div className="bg-panel rounded-2xl p-3"><div className="font-display text-2xl leading-none text-ghost">{data.totalCheckins}</div><div className="font-sans uppercase tracking-wider text-muted mt-1.5" style={{ fontSize: '9.5px' }}>Check-ins</div></div>
+            <div className="bg-panel rounded-2xl p-3"><div className="font-display text-2xl leading-none" style={{ color: '#FFC23C' }}>{data.avgComplete}%</div><div className="font-sans uppercase tracking-wider text-muted mt-1.5" style={{ fontSize: '9.5px' }}>Avg complete</div></div>
+          </div>
+
+          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Check-ins \u00b7 last 14 days</p>
+          <div className="bg-panel rounded-2xl p-4 mb-5">
+            <div className="flex items-end gap-1" style={{ height: 56 }}>
+              {data.sparkCounts.map((n, i) => {
+                const max = Math.max(1, ...data.sparkCounts);
+                return <div key={i} className="flex-1 rounded-t" title={`${n} check-ins`} style={{ height: `${Math.max(6, (n / max) * 100)}%`, background: n ? '#29E0FF' : '#20212B' }} />;
+              })}
+            </div>
+          </div>
+
+          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Needs a nudge</p>
+          {data.cold.length === 0 && data.slip.length === 0 ? (
+            <div className="bg-panel rounded-2xl p-4 mb-5 flex items-center gap-3" style={{ borderLeft: '4px solid #46E5A0' }}>
+              <span className="font-sans text-sm text-ghost">Everyone\u2019s checked in recently \u2014 nice.</span>
+            </div>
+          ) : (
+            <div className="mb-5 grid gap-2">
+              {data.cold.map((a) => (
+                <div key={a.id} className="rounded-2xl p-3.5 flex items-center gap-3" style={{ background: 'linear-gradient(150deg, rgba(255,77,94,.13), #17171F)', border: '1px solid rgba(255,77,94,.35)' }}>
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(255,77,94,.18)' }}><ChevronDown size={18} style={{ color: '#FF6B7A' }} /></div>
+                  <p className="font-sans text-sm leading-snug"><b style={{ color: '#FF6B7A' }}>{a.name}</b> {a.dSince === null ? 'hasn\u2019t checked in yet this window' : `hasn\u2019t checked in for ${a.dSince} days`}{a.streak ? '' : ' \u2014 streak lost'}. A quick word might get them back.</p>
+                </div>
+              ))}
+              {data.slip.map((a) => (
+                <div key={a.id} className="rounded-2xl p-3.5 flex items-center gap-3" style={{ background: 'linear-gradient(150deg, rgba(255,159,69,.12), #17171F)', border: '1px solid rgba(255,159,69,.3)' }}>
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(255,159,69,.16)' }}><TrendingUp size={18} style={{ color: '#FF9F45', transform: 'scaleY(-1)' }} /></div>
+                  <p className="font-sans text-sm leading-snug"><b style={{ color: '#FF9F45' }}>{a.name}</b> is slipping \u2014 no check-in for 2 days. Worth a nudge before the streak\u2019s at risk.</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Athletes</p>
+          <div className="mb-5">
+            {data.kids.map((a) => (
+              <div key={a.id} className="bg-panel rounded-2xl p-3.5 mb-2.5" style={{ borderLeft: `4px solid ${a.color}` }}>
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl flex items-center justify-center font-display text-ink text-lg shrink-0 overflow-hidden" style={{ background: a.color }}>{a.avatar ? <img src={a.avatar} alt="" className="w-full h-full object-cover" /> : a.name[0]}</div>
+                  <div className="min-w-0">
+                    <p className="font-display text-lg tracking-wide leading-none" style={{ color: a.color }}>{a.name}</p>
+                    <p className="font-sans text-muted mt-1" style={{ fontSize: '11px' }}>Active {ago(a.lastSeen)}{a.streak >= 3 ? ` \u00b7 \ud83d\udd25 ${a.streak}-day streak` : ''}</p>
+                  </div>
+                  <StatPill status={a.status} />
+                </div>
+                <div className="grid grid-cols-4 gap-1.5 mt-3">
+                  {[['days', a.days], ['streak', a.streak], ['tasks', a.tasks], ['complete', `${a.completion}%`]].map(([l, v], i) => (
+                    <div key={i} className="bg-raised rounded-lg py-1.5 text-center"><div className="font-display text-base leading-none" style={{ color: a.color }}>{v}</div><div className="font-sans uppercase text-muted mt-1" style={{ fontSize: '8.5px', letterSpacing: '.04em' }}>{l}</div></div>
+                  ))}
+                </div>
+                <div className="rounded mt-2.5 overflow-hidden" style={{ height: 5, background: '#20212B' }}><div style={{ width: `${a.completion}%`, height: '100%', background: a.color, borderRadius: 4 }} /></div>
+                <div className="flex justify-between mt-1.5"><span className="font-sans text-muted" style={{ fontSize: '10px' }}>Task completion</span><span className="font-sans text-muted" style={{ fontSize: '10px' }}>{a.completion}% of available</span></div>
+              </div>
+            ))}
+          </div>
+
+          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Which hooks are landing</p>
+          <div className="grid grid-cols-5 gap-2 mb-5">
+            {[['\ud83c\udfc5', data.badgesTotal, 'Badges', '#FFC23C'], ['\u26a1', data.powerTotal, 'Power-ups', '#FF4D6D'], ['\ud83d\udce3', data.shoutTotal, 'Shoutouts', '#29E0FF'], ['\u2764\ufe0f', data.reactTotal, 'Reactions', '#46E5A0'], ['\ud83d\udcb0', data.paydaysTotal, 'Paydays', '#FFC23C']].map(([ic, v, l, c], i) => (
+              <div key={i} className="bg-panel rounded-xl py-3 text-center"><div style={{ fontSize: '17px' }}>{ic}</div><div className="font-display leading-none mt-1" style={{ fontSize: '19px', color: c }}>{v}</div><div className="font-sans uppercase text-muted mt-1" style={{ fontSize: '8.5px' }}>{l}</div></div>
+            ))}
+          </div>
+
+          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Commanders</p>
+          <div className="grid grid-cols-2 gap-2">
+            {data.parents.map((p) => (
+              <div key={p.id} className="bg-panel rounded-xl p-3 flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center font-display text-ink shrink-0" style={{ background: '#FFC23C' }}>{p.name[0]}</div>
+                <div className="min-w-0"><p className="font-display text-base tracking-wide leading-none" style={{ color: '#FFC23C' }}>{p.name.split(' ')[0]}</p><p className="font-sans text-muted mt-1" style={{ fontSize: '10px' }}>Active {ago(p.lastSeen)}</p></div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ---------- Shell with tabs ---------- */
 /* ---------- Family Hub nav (slide-out drawer) ---------- */
 const HUB_PAGES = [
@@ -545,12 +773,13 @@ const HUB_PAGES = [
   { id: 'profile', label: 'Profile', sub: 'Your hero card', Icon: User },
   { id: 'wins', label: 'Wins', sub: 'Family wins & shoutouts', Icon: Megaphone },
   { id: 'calendar', label: 'Calendar', sub: 'Family schedule', Icon: Calendar },
+  { id: 'stats', label: 'Stats', sub: 'Family engagement', Icon: Activity, parentOnly: true },
   { id: 'whatsnew', label: "What's New", sub: 'Latest feature updates', Icon: Sparkles },
   { id: 'settings', label: 'Settings', sub: 'Preferences & accents', Icon: Settings },
 ];
 const NAV_W = 'min(85vw, 300px)';
 
-function HubNav({ open, onClose, page, setPage, accent }) {
+function HubNav({ open, onClose, page, setPage, accent, isParent }) {
   return (
     <>
       <div onClick={onClose}
@@ -566,7 +795,7 @@ function HubNav({ open, onClose, page, setPage, accent }) {
           <button onClick={onClose} className="text-muted hover:text-ghost p-1 -mr-1" aria-label="Close menu"><X size={22} /></button>
         </div>
         <nav className="p-3 flex flex-col gap-2">
-          {HUB_PAGES.map(({ id, label, sub, Icon }) => {
+          {HUB_PAGES.filter((p) => isParent || !p.parentOnly).map(({ id, label, sub, Icon }) => {
             const active = page === id;
             return (
               <button key={id} onClick={() => { setPage(id); onClose(); }}
@@ -1722,7 +1951,7 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
   const season = activeSeason();
   return (
     <div className="relative min-h-screen overflow-x-hidden">
-      <HubNav open={navOpen} onClose={() => setNavOpen(false)} page={page} setPage={setPage} accent={accent} />
+      <HubNav open={navOpen} onClose={() => setNavOpen(false)} page={page} setPage={setPage} accent={accent} isParent={isParent} />
       <div className={`min-h-screen bg-ink text-ghost font-sans pb-24 overflow-x-hidden ${devOffset ? 'pt-16' : ''}`}
         onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
 
@@ -1768,6 +1997,8 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
                   ? <WinsPage userId={userId} accent={accent} />
                 : page === 'calendar'
                   ? <CalendarPage accent={accent} />
+                : page === 'stats'
+                  ? <CommanderStats accent={accent} />
                 : page === 'whatsnew'
                   ? <WhatsNewPage accent={accent} />
                   : <>
@@ -1806,14 +2037,16 @@ function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
   const gold = '#FFC23C';
   const nav = [
     { id: 'overview', label: 'Overview', Icon: LayoutDashboard },
+    { id: 'stats', label: 'Stats', Icon: Activity },
     { id: 'main', label: 'Athletes', Icon: Users },
     { id: 'league', label: 'League', Icon: Trophy },
     { id: 'bonus', label: 'Payouts', Icon: Wallet },
     { id: 'challenges', label: 'Challenges', Icon: Calendar },
   ];
-  const titles = { overview: 'Overview', main: 'Athletes', league: 'League', bonus: 'Payouts', challenges: 'Challenges' };
+  const titles = { overview: 'Overview', stats: 'Stats', main: 'Athletes', league: 'League', bonus: 'Payouts', challenges: 'Challenges' };
   const blurbs = {
     overview: 'Everything that needs your eyes, at a glance.',
+    stats: 'Engagement trends and who needs a nudge \u2014 over time.',
     main: 'Review every athlete and drill into any day.',
     league: 'Weekly standings and the season championship.',
     bonus: 'Allowance is automatic — verify and pay out claimed power-ups.',
@@ -1851,13 +2084,15 @@ function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
           </button>
         </aside>
         <main className="flex-1 min-w-0 overflow-x-hidden">
-          <div className={`mx-auto px-8 py-8 ${tab === 'main' || tab === 'overview' ? 'max-w-5xl' : 'max-w-2xl'}`}>
+          <div className={`mx-auto px-8 py-8 ${tab === 'main' || tab === 'overview' || tab === 'stats' ? 'max-w-5xl' : 'max-w-2xl'}`}>
             <div className="mb-6">
               <h1 className="font-display text-3xl tracking-wide text-ghost leading-none">{titles[tab] || 'Athletes'}</h1>
               <p className="font-sans text-muted text-sm mt-1.5">{blurbs[tab] || ''}</p>
             </div>
             {tab === 'overview'
               ? <Overview userId={userId} setTab={setTab} />
+              : tab === 'stats'
+                ? <CommanderStats accent={gold} />
               : tab === 'league'
                 ? <LeaderBoard />
                 : tab === 'challenges'
