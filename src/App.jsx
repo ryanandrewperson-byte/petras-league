@@ -551,7 +551,7 @@ function StatPill({ status }) {
   return <span className="font-sans font-bold uppercase ml-auto shrink-0" style={{ fontSize: '9.5px', letterSpacing: '.05em', padding: '4px 9px', borderRadius: 20, background: m.bg, color: m.c }}>{m.t}</span>;
 }
 
-function CommanderStats({ accent }) {
+function CommanderStats({ accent, hideTitle = false }) {
   const active = useActiveChallenge();
   const [win, setWin] = useState('challenge');
   const [data, setData] = useState(null);
@@ -572,13 +572,14 @@ function CommanderStats({ accent }) {
       const since14 = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 13); return d; })());
 
       const entQ = (q) => active.challenge ? q.eq('challenge_id', active.challenge.id) : q;
-      const [profRes, entRes, sparkRes, bonusRes, shoutRes, reactRes] = await Promise.all([
+      const [profRes, entRes, sparkRes, bonusRes, shoutRes, reactRes, loginRes] = await Promise.all([
         supabase.from('profiles').select('id, full_name, role, hero_color, codename, sport, avatar_url, last_seen_at'),
         entQ(supabase.from('daily_entries').select('id, kid_id, entry_date').gte('entry_date', start)),
         entQ(supabase.from('daily_entries').select('entry_date').gte('entry_date', since14)),
         supabase.from('bonuses').select('kid_id, status, verified_at'),
         supabase.from('shoutouts').select('id', { count: 'exact', head: true }),
         supabase.from('reactions').select('target_key', { count: 'exact', head: true }),
+        supabase.rpc('usage_logins'),
       ]);
       const profs = profRes.data || [];
       const entries = entRes.data || [];
@@ -590,6 +591,8 @@ function CommanderStats({ accent }) {
       }
       const kids = profs.filter((p) => p.role === 'kid');
       const parents = profs.filter((p) => p.role === 'parent');
+      const loginById = {}; (loginRes.data || []).forEach((l) => { loginById[l.id] = l.last_sign_in_at; });
+      const tsOf = (v) => (v ? new Date(v).getTime() : 0);
 
       const byKid = {};
       kids.forEach((k) => { byKid[k.id] = { dates: new Set(), completed: 0, perfect: new Set() }; });
@@ -627,7 +630,8 @@ function CommanderStats({ accent }) {
         badgesTotal += earnedBadges(stats).size;
         const wk = {}; [...b.perfect].forEach((ds) => { const w = weekMondayOf(ds); wk[w] = (wk[w] || 0) + 1; });
         paydaysTotal += Object.values(wk).filter((n) => n >= 7).length;
-        return { id: k.id, name: k.codename || k.full_name, color: k.hero_color || accent, avatar: k.avatar_url, lastSeen: k.last_seen_at, days, streak, tasks: b.completed, completion, status, dSince };
+        const lastActiveTs = Math.max(tsOf(k.last_seen_at), tsOf(loginById[k.id]), lastCheckin ? new Date(lastCheckin + 'T12:00:00').getTime() : 0) || null;
+        return { id: k.id, name: k.full_name, color: k.hero_color || accent, avatar: k.avatar_url, lastActiveTs, days, streak, tasks: b.completed, completion, status, dSince };
       });
 
       const sparkDays = Array.from({ length: 14 }, (_, i) => { const x = new Date(); x.setDate(x.getDate() - (13 - i)); return ymdOf(x); });
@@ -635,9 +639,9 @@ function CommanderStats({ accent }) {
 
       if (alive) setData({
         kids: athletes,
-        parents: parents.map((p) => ({ id: p.id, name: p.full_name, lastSeen: p.last_seen_at })),
-        activeToday: kids.filter((k) => isToday(k.last_seen_at)).length,
-        activeWeek: kids.filter((k) => within(k.last_seen_at, 7)).length,
+        parents: parents.map((p) => ({ id: p.id, name: p.full_name, lastActiveTs: Math.max(tsOf(p.last_seen_at), tsOf(loginById[p.id])) || null })),
+        activeToday: athletes.filter((a) => a.lastActiveTs && ymdOf(new Date(a.lastActiveTs)) === today).length,
+        activeWeek: athletes.filter((a) => a.lastActiveTs && (Date.now() - a.lastActiveTs) <= 7 * 86400000).length,
         totalCheckins: entries.length,
         avgComplete: kids.length ? Math.round(compSum / kids.length) : 0,
         sparkCounts, badgesTotal, powerTotal, paydaysTotal,
@@ -659,7 +663,7 @@ function CommanderStats({ accent }) {
     return `${Math.floor(dd / 30)}mo ago`;
   };
 
-  if (!active) return <p className="font-sans text-muted text-sm">Loading stats\u2026</p>;
+  if (!active) return <p className="font-sans text-muted text-sm">Loading stats…</p>;
   if (!active.challenge) return <ChallengeBreak isParent />;
 
   const winBtns = [['week', 'Week'], ['challenge', 'Challenge'], ['30d', '30d']];
@@ -667,10 +671,12 @@ function CommanderStats({ accent }) {
   return (
     <div>
       <div className="flex items-end justify-between mb-4">
-        <div>
-          <h2 className="font-display text-3xl tracking-wide text-ghost leading-none">Stats</h2>
-          <p className="font-sans text-muted text-xs mt-1.5">Family engagement \u00b7 {active.challenge.name}</p>
-        </div>
+        {hideTitle ? <div /> : (
+          <div>
+            <h2 className="font-display text-3xl tracking-wide text-ghost leading-none">Stats</h2>
+            <p className="font-sans text-muted text-xs mt-1.5">Family engagement · {active.challenge.name}</p>
+          </div>
+        )}
         <div className="flex gap-1 bg-raised rounded-xl p-1 shrink-0">
           {winBtns.map(([k, lbl]) => (
             <button key={k} onClick={() => setWin(k)} className="font-sans text-xs font-semibold rounded-lg px-2.5 py-1.5 transition-colors"
@@ -679,7 +685,7 @@ function CommanderStats({ accent }) {
         </div>
       </div>
 
-      {!data ? <p className="font-sans text-muted text-sm">Crunching the numbers\u2026</p> : (
+      {!data ? <p className="font-sans text-muted text-sm">Crunching the numbers…</p> : (
         <>
           <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Family pulse</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-5">
@@ -689,7 +695,7 @@ function CommanderStats({ accent }) {
             <div className="bg-panel rounded-2xl p-3"><div className="font-display text-2xl leading-none" style={{ color: '#FFC23C' }}>{data.avgComplete}%</div><div className="font-sans uppercase tracking-wider text-muted mt-1.5" style={{ fontSize: '9.5px' }}>Avg complete</div></div>
           </div>
 
-          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Check-ins \u00b7 last 14 days</p>
+          <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Check-ins · last 14 days</p>
           <div className="bg-panel rounded-2xl p-4 mb-5">
             <div className="flex items-end gap-1" style={{ height: 56 }}>
               {data.sparkCounts.map((n, i) => {
@@ -702,20 +708,20 @@ function CommanderStats({ accent }) {
           <p className="font-sans text-xs font-bold uppercase tracking-widest mb-2 text-muted">Needs a nudge</p>
           {data.cold.length === 0 && data.slip.length === 0 ? (
             <div className="bg-panel rounded-2xl p-4 mb-5 flex items-center gap-3" style={{ borderLeft: '4px solid #46E5A0' }}>
-              <span className="font-sans text-sm text-ghost">Everyone\u2019s checked in recently \u2014 nice.</span>
+              <span className="font-sans text-sm text-ghost">Everyone’s checked in recently — nice.</span>
             </div>
           ) : (
             <div className="mb-5 grid gap-2">
               {data.cold.map((a) => (
                 <div key={a.id} className="rounded-2xl p-3.5 flex items-center gap-3" style={{ background: 'linear-gradient(150deg, rgba(255,77,94,.13), #17171F)', border: '1px solid rgba(255,77,94,.35)' }}>
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(255,77,94,.18)' }}><ChevronDown size={18} style={{ color: '#FF6B7A' }} /></div>
-                  <p className="font-sans text-sm leading-snug"><b style={{ color: '#FF6B7A' }}>{a.name}</b> {a.dSince === null ? 'hasn\u2019t checked in yet this window' : `hasn\u2019t checked in for ${a.dSince} days`}{a.streak ? '' : ' \u2014 streak lost'}. A quick word might get them back.</p>
+                  <p className="font-sans text-sm leading-snug"><b style={{ color: '#FF6B7A' }}>{a.name}</b> {a.dSince === null ? 'hasn’t checked in yet this window' : `hasn’t checked in for ${a.dSince} days`}{a.streak ? '' : ' — streak lost'}. A quick word might get them back.</p>
                 </div>
               ))}
               {data.slip.map((a) => (
                 <div key={a.id} className="rounded-2xl p-3.5 flex items-center gap-3" style={{ background: 'linear-gradient(150deg, rgba(255,159,69,.12), #17171F)', border: '1px solid rgba(255,159,69,.3)' }}>
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(255,159,69,.16)' }}><TrendingUp size={18} style={{ color: '#FF9F45', transform: 'scaleY(-1)' }} /></div>
-                  <p className="font-sans text-sm leading-snug"><b style={{ color: '#FF9F45' }}>{a.name}</b> is slipping \u2014 no check-in for 2 days. Worth a nudge before the streak\u2019s at risk.</p>
+                  <p className="font-sans text-sm leading-snug"><b style={{ color: '#FF9F45' }}>{a.name}</b> is slipping — no check-in for 2 days. Worth a nudge before the streak’s at risk.</p>
                 </div>
               ))}
             </div>
@@ -729,7 +735,7 @@ function CommanderStats({ accent }) {
                   <div className="w-9 h-9 rounded-xl flex items-center justify-center font-display text-ink text-lg shrink-0 overflow-hidden" style={{ background: a.color }}>{a.avatar ? <img src={a.avatar} alt="" className="w-full h-full object-cover" /> : a.name[0]}</div>
                   <div className="min-w-0">
                     <p className="font-display text-lg tracking-wide leading-none" style={{ color: a.color }}>{a.name}</p>
-                    <p className="font-sans text-muted mt-1" style={{ fontSize: '11px' }}>Active {ago(a.lastSeen)}{a.streak >= 3 ? ` \u00b7 \ud83d\udd25 ${a.streak}-day streak` : ''}</p>
+                    <p className="font-sans text-muted mt-1" style={{ fontSize: '11px' }}>{a.lastActiveTs ? `Active ${ago(a.lastActiveTs)}` : 'No activity yet'}{a.streak >= 3 ? ` · 🔥 ${a.streak}-day streak` : ''}</p>
                   </div>
                   <StatPill status={a.status} />
                 </div>
@@ -756,7 +762,7 @@ function CommanderStats({ accent }) {
             {data.parents.map((p) => (
               <div key={p.id} className="bg-panel rounded-xl p-3 flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg flex items-center justify-center font-display text-ink shrink-0" style={{ background: '#FFC23C' }}>{p.name[0]}</div>
-                <div className="min-w-0"><p className="font-display text-base tracking-wide leading-none" style={{ color: '#FFC23C' }}>{p.name.split(' ')[0]}</p><p className="font-sans text-muted mt-1" style={{ fontSize: '10px' }}>Active {ago(p.lastSeen)}</p></div>
+                <div className="min-w-0"><p className="font-display text-base tracking-wide leading-none" style={{ color: '#FFC23C' }}>{p.name.split(' ')[0]}</p><p className="font-sans text-muted mt-1" style={{ fontSize: '10px' }}>{p.lastActiveTs ? `Active ${ago(p.lastActiveTs)}` : 'No activity yet'}</p></div>
               </div>
             ))}
           </div>
@@ -2092,7 +2098,7 @@ function DesktopShell({ profile, userId, tab, setTab, devOffset }) {
             {tab === 'overview'
               ? <Overview userId={userId} setTab={setTab} />
               : tab === 'stats'
-                ? <CommanderStats accent={gold} />
+                ? <CommanderStats accent={gold} hideTitle />
               : tab === 'league'
                 ? <LeaderBoard />
                 : tab === 'challenges'
@@ -3506,8 +3512,8 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
             <span>parked</span><span>1hr</span><span>2hr</span><span>unlimited</span>
           </div>
           {nextPhone
-            ? <p className="font-sans mt-2.5" style={{ fontSize: '14px', color: '#F4F5FA' }}><b style={{ color: hero }}>{phoneNeed} more task{phoneNeed > 1 ? 's' : ''}</b> \u2192 <b style={{ color: hero }}>{nextPhone.label}</b> today</p>
-            : <p className="font-sans mt-2.5" style={{ fontSize: '14px', color: hero, fontWeight: 600 }}>Phone unlocked for today \ud83c\udf89</p>}
+            ? <p className="font-sans mt-2.5" style={{ fontSize: '14px', color: '#F4F5FA' }}><b style={{ color: hero }}>{phoneNeed} more task{phoneNeed > 1 ? 's' : ''}</b> → <b style={{ color: hero }}>{nextPhone.label}</b> today</p>
+            : <p className="font-sans mt-2.5" style={{ fontSize: '14px', color: hero, fontWeight: 600 }}>Phone unlocked for today 🎉</p>}
         </div>
       )}
 
