@@ -79,6 +79,63 @@ function streakFromDates(dateSet) {
   return n;
 }
 
+// Phase 6: family-wide streak threshold (default 0.5). Read from family_settings.
+function useStreakThreshold() {
+  const [thr, setThr] = useState(0.5);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      const uid = u?.user?.id; if (!uid) return;
+      const { data: p } = await supabase.from('profiles').select('family_id').eq('id', uid).maybeSingle();
+      const fam = p?.family_id;
+      let row = null;
+      if (fam) { const r = await supabase.from('family_settings').select('settings').eq('family_id', fam).maybeSingle(); row = r.data; }
+      if (!row) { const r = await supabase.from('family_settings').select('settings').limit(1).maybeSingle(); row = r.data; }
+      const v = row?.settings?.streak_threshold;
+      if (alive && typeof v === 'number') setThr(v);
+    })();
+    return () => { alive = false; };
+  }, []);
+  return thr;
+}
+
+// Threshold-aware streaks: a day only counts if completed tasks >= ceil(threshold * dailyMax).
+// Returns { kidId: streakLength }. Resolves dailyMax itself when not given.
+async function computeStreaks(kidIds, dailyMax, threshold) {
+  let dm = dailyMax;
+  if (dm == null) {
+    const today = todayKey();
+    const { data: chs } = await supabase.from('challenges').select('id').lte('start_date', today).gte('end_date', today).order('start_date', { ascending: false }).limit(1);
+    const ch = chs && chs[0];
+    if (ch) { const { data: ts } = await supabase.from('challenge_tasks').select('id').eq('challenge_id', ch.id); dm = (ts || []).length; }
+    else dm = 0;
+  }
+  const need = Math.max(1, Math.ceil((typeof threshold === 'number' ? threshold : 0.5) * (dm || 0)));
+  const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
+  let q = supabase.from('daily_entries').select('id, kid_id, entry_date').gte('entry_date', since);
+  if (kidIds && kidIds.length === 1) q = q.eq('kid_id', kidIds[0]);
+  else if (kidIds && kidIds.length) q = q.in('kid_id', kidIds);
+  const { data: rows } = await q;
+  const list = rows || [];
+  const ids = list.map((e) => e.id);
+  const comp = {};
+  if (ids.length) {
+    const { data: ets } = await supabase.from('entry_tasks').select('entry_id, completed').in('entry_id', ids);
+    (ets || []).forEach((t) => { if (t.completed) comp[t.entry_id] = (comp[t.entry_id] || 0) + 1; });
+  }
+  const byKidDate = {};
+  list.forEach((e) => { const m = (byKidDate[e.kid_id] = byKidDate[e.kid_id] || {}); m[e.entry_date] = Math.max(m[e.entry_date] || 0, comp[e.id] || 0); });
+  const out = {};
+  Object.keys(byKidDate).forEach((kid) => {
+    const set = new Set();
+    Object.keys(byKidDate[kid]).forEach((d) => { if (byKidDate[kid][d] >= need) set.add(d); });
+    out[kid] = streakFromDates(set);
+  });
+  (kidIds || []).forEach((k) => { if (!(k in out)) out[k] = 0; });
+  return out;
+}
+
 function dayName(ds) {
   const [y, m, d] = ds.split('-').map(Number);
   return new Date(y, m - 1, d).toLocaleDateString('en-US', { weekday: 'short' });
@@ -555,6 +612,7 @@ function StatPill({ status }) {
 function CommanderStats({ accent, hideTitle = false }) {
   const active = useActiveChallenge();
   const [win, setWin] = useState('week');
+  const threshold = useStreakThreshold();
   const [data, setData] = useState(null);
 
   useEffect(() => {
@@ -594,6 +652,7 @@ function CommanderStats({ accent, hideTitle = false }) {
       const parents = profs.filter((p) => p.role === 'parent');
       const loginById = {}; (loginRes.data || []).forEach((l) => { loginById[l.id] = l.last_sign_in_at; });
       const tsOf = (v) => (v ? new Date(v).getTime() : 0);
+      const streaksMap = await computeStreaks(kids.map((k) => k.id), dailyMax, threshold);
 
       const byKid = {};
       kids.forEach((k) => { byKid[k.id] = { dates: new Set(), completed: 0, perfect: new Set() }; });
@@ -621,7 +680,7 @@ function CommanderStats({ accent, hideTitle = false }) {
       const athletes = kids.map((k) => {
         const b = byKid[k.id];
         const days = b.dates.size;
-        const streak = streakFromDates(b.dates);
+        const streak = streaksMap[k.id] || 0;
         const completion = Math.min(100, Math.round((b.completed / available) * 100));
         compSum += completion;
         const lastCheckin = days ? [...b.dates].sort().slice(-1)[0] : null;
@@ -1081,6 +1140,48 @@ function SettingsPage({ accent, profile, isParent }) {
       return nv;
     });
   };
+  // Phase 6: family streak threshold control (parents only)
+  const STREAK_STOPS = [0, 0.25, 0.5, 0.75, 1.0];
+  const STREAK_LBL = ['Any task', '25%', '50%', '75%', 'All'];
+  const STREAK_DESC = [
+    'A day counts the moment an athlete checks any one task -- basically "showed up."',
+    "A day counts at a quarter of the day's tasks done.",
+    "A day counts when an athlete finishes at least half their tasks. Forgiving on a rough day, but it has to mean real effort.",
+    "A day counts at three-quarters of the day's tasks done -- demanding.",
+    'A day counts only on a perfect day -- every task done. One miss breaks the streak.',
+  ];
+  const [famId, setFamId] = useState(null);
+  const [famSettings, setFamSettings] = useState({});
+  const [thrIdx, setThrIdx] = useState(2);
+  const [savingThr, setSavingThr] = useState(false);
+  useEffect(() => {
+    if (!isParent) return;
+    let alive = true;
+    (async () => {
+      const { data: u } = await supabase.auth.getUser();
+      const { data: p } = await supabase.from('profiles').select('family_id').eq('id', u?.user?.id).maybeSingle();
+      let fam = p?.family_id || null;
+      let row = null;
+      if (fam) { const r = await supabase.from('family_settings').select('family_id, settings').eq('family_id', fam).maybeSingle(); row = r.data; }
+      if (!row) { const r = await supabase.from('family_settings').select('family_id, settings').limit(1).maybeSingle(); row = r.data; if (row && !fam) fam = row.family_id; }
+      if (!alive) return;
+      setFamId(fam);
+      const st = (row && row.settings) || {};
+      setFamSettings(st);
+      const v = st.streak_threshold;
+      if (typeof v === 'number') { const i = STREAK_STOPS.indexOf(v); setThrIdx(i >= 0 ? i : 2); }
+    })();
+    return () => { alive = false; };
+  }, [isParent]);
+  const saveThr = async (idx) => {
+    setThrIdx(idx);
+    if (!famId) return;
+    setSavingThr(true);
+    const next = { ...famSettings, streak_threshold: STREAK_STOPS[idx] };
+    setFamSettings(next);
+    await supabase.from('family_settings').upsert({ family_id: famId, settings: next, updated_at: new Date().toISOString() }, { onConflict: 'family_id' });
+    setSavingThr(false);
+  };
   return (
     <div className="space-y-6">
       <div>
@@ -1093,6 +1194,25 @@ function SettingsPage({ accent, profile, isParent }) {
           sub="Subtle holiday flair around the app (July 4th, Halloween, and more)."
           on={seasonal} onToggle={toggleSeasonal} accent={accent} />
       </SettingsSection>
+
+      {isParent && (
+        <SettingsSection title="Streaks">
+          <div className="p-4">
+            <p className="font-sans text-ghost text-sm font-semibold">What keeps a streak alive</p>
+            <p className="font-sans text-muted text-xs mt-0.5 mb-4 leading-snug">How much of the day's tasks an athlete must finish for the day to count toward their streak. This is one rule for the whole family.</p>
+            <input type="range" min="0" max="4" step="1" value={thrIdx} onChange={(e) => saveThr(Number(e.target.value))} className="w-full" style={{ accentColor: accent }} />
+            <div className="flex justify-between mt-1.5">
+              {STREAK_LBL.map((l, i) => (
+                <span key={i} className="font-sans" style={{ fontSize: '10px', width: '20%', textAlign: i === 0 ? 'left' : i === 4 ? 'right' : 'center', fontWeight: i === thrIdx ? 700 : 500, color: i === thrIdx ? accent : '#9A9CB0' }}>{l}</span>
+              ))}
+            </div>
+            <div className="mt-3 rounded-xl bg-raised p-3">
+              <p className="font-sans text-ghost text-xs leading-snug">{STREAK_DESC[thrIdx]}</p>
+            </div>
+            {savingThr && <p className="font-sans text-muted text-xs mt-2">Saving...</p>}
+          </div>
+        </SettingsSection>
+      )}
 
       <SettingsSection title="Account">
         <InfoRow label="Name" value={profile.full_name} />
@@ -1648,6 +1768,7 @@ function RankToast({ info, color, onDone }) {
 function ProfilePage({ userId, accent, isOwn = true }) {
   const [data, setData] = useState(null);
   const [stats, setStats] = useState({ rank: null, points: null, streak: 0, rival: null });
+  const threshold = useStreakThreshold();
   const [toast, setToast] = useState(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -1679,9 +1800,8 @@ function ProfilePage({ userId, accent, isOwn = true }) {
         const ahead = list.find((r) => r.rank === myRank - 1);
         if (ahead) rival = { name: ahead.codename || ahead.full_name, color: ahead.hero_color || accent, gap: Math.max(0, (ahead.total_points || 0) - (myPts || 0)) };
       }
-      const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
-      const { data: sdes } = await supabase.from('daily_entries').select('entry_date').eq('kid_id', userId).gte('entry_date', since);
-      setStats({ rank: myRank, points: myPts, streak: streakFromDates(new Set((sdes || []).map((e) => e.entry_date))), rival });
+      const sObj = await computeStreaks([userId], undefined, threshold);
+      setStats({ rank: myRank, points: myPts, streak: sObj[userId] || 0, rival });
       if (isOwn && myRank) {
         const key = `pl_lastrank_${userId}`;
         let last = null;
@@ -3054,17 +3174,14 @@ function ParentAthletes({ userId, wide }) {
   const [loading, setLoading] = useState(true);
   const [reveal, setReveal] = useState(false);
   const [streaks, setStreaks] = useState({});
+  const threshold = useStreakThreshold();
   const weekStart = weekDates()[0];
   const active = useActiveChallenge();
 
   const load = async () => {
     const { data: ks } = await supabase.from('profiles').select('id, full_name, hero_color, sport, codename').eq('role', 'kid');
     setKids(ks || []);
-    const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
-    const { data: sdes } = await supabase.from('daily_entries').select('kid_id, entry_date').gte('entry_date', since);
-    const setsByKid = {};
-    (sdes || []).forEach(e => { (setsByKid[e.kid_id] = setsByKid[e.kid_id] || new Set()).add(e.entry_date); });
-    const sk = {}; (ks || []).forEach(k => { sk[k.id] = streakFromDates(setsByKid[k.id]); });
+    const sk = await computeStreaks((ks || []).map(k => k.id), active.tasks.length, threshold);
     setStreaks(sk);
     const { data: lb } = await supabase.rpc('get_leaderboard');
     setBoard(lb || []);
@@ -3289,15 +3406,15 @@ function KidAthletes({ profile, userId }) {
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(true);
   const [streak, setStreak] = useState(0);
+  const threshold = useStreakThreshold();
   const weekStart = weekDates()[0];
   const active = useActiveChallenge();
 
   const load = async () => {
     const { data: lb } = await supabase.rpc('get_leaderboard');
     setBoard((lb || []).find(r => r.kid_id === userId) || null);
-    const since = ymdOf((() => { const d = new Date(); d.setDate(d.getDate() - 34); return d; })());
-    const { data: sdes } = await supabase.from('daily_entries').select('entry_date').eq('kid_id', userId).gte('entry_date', since);
-    setStreak(streakFromDates(new Set((sdes || []).map(e => e.entry_date))));
+    const sObj = await computeStreaks([userId], active.tasks.length, threshold);
+    setStreak(sObj[userId] || 0);
     const wk = weekDates();
     let wq = supabase.from('daily_entries').select('id, entry_date').eq('kid_id', userId).gte('entry_date', wk[0]);
     if (active && active.challenge) wq = wq.eq('challenge_id', active.challenge.id);
