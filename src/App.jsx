@@ -472,7 +472,8 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState(() => { try { return localStorage.getItem('pl_tab') || 'overview'; } catch { return 'overview'; } });
+  useEffect(() => { try { localStorage.setItem('pl_tab', tab); } catch {} }, [tab]);
   const [members, setMembers] = useState([]);
   const [viewAs, setViewAs] = useState(null);
   const [devView, setDevView] = useState('auto');
@@ -553,7 +554,7 @@ function StatPill({ status }) {
 
 function CommanderStats({ accent, hideTitle = false }) {
   const active = useActiveChallenge();
-  const [win, setWin] = useState('challenge');
+  const [win, setWin] = useState('week');
   const [data, setData] = useState(null);
 
   useEffect(() => {
@@ -1861,7 +1862,8 @@ function Shell({ profile, userId, tab, setTab, devOffset }) {
   const accent = isParent ? '#FFC23C' : profile.hero_color;
   const [showProfile, setShowProfile] = useState(false);
   const [showGuide, setShowGuide] = useState(false);
-  const [page, setPage] = useState('challenge');
+  const [page, setPage] = useState(() => { try { return localStorage.getItem('pl_page') || 'challenge'; } catch { return 'challenge'; } });
+  useEffect(() => { try { localStorage.setItem('pl_page', page); } catch {} }, [page]);
   const [navOpen, setNavOpen] = useState(false);
 
   // ----- Pull-to-refresh (soft: remounts the current screen -> refetch) -----
