@@ -196,7 +196,25 @@ function CelebrationProvider({ children }) {
         .crown-drop{animation:crownDrop .6s cubic-bezier(.2,1.3,.4,1) both}
         @keyframes flameFlicker{0%,100%{transform:scale(1) rotate(-1.5deg)}50%{transform:scale(1.13) rotate(1.5deg)}}
         .flame-flicker{animation:flameFlicker 1.4s ease-in-out infinite;transform-origin:bottom center}
-        @media (prefers-reduced-motion: reduce){.center-pow,.check-pop,.crown-drop,.flame-flicker{animation:none}}
+        @keyframes streakSweep{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+        .streak-sweep{animation:streakSweep .55s cubic-bezier(.2,.8,.2,1) both;transform-origin:left center}
+        @keyframes streakPop{0%{transform:scale(1)}40%{transform:scale(1.05)}100%{transform:scale(1)}}
+        .streak-pop{animation:streakPop .4s cubic-bezier(.2,1.3,.4,1) both}
+        @keyframes streakPopBig{0%{transform:scale(1)}30%{transform:scale(1.07) rotate(-1deg)}60%{transform:scale(.99)}100%{transform:scale(1)}}
+        .streak-pop-big{animation:streakPopBig .55s cubic-bezier(.2,1.3,.4,1) both}
+        @keyframes streakShake{0%,100%{transform:translateX(0)}20%{transform:translateX(-3px)}40%{transform:translateX(3px)}60%{transform:translateX(-2px)}80%{transform:translateX(2px)}}
+        .streak-shake{animation:streakShake .5s both}
+        @keyframes streakRiskPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,77,94,0)}50%{box-shadow:0 0 18px -2px rgba(255,77,94,.55)}}
+        .streak-risk-pulse{animation:streakRiskPulse 1.1s ease-in-out infinite}
+        @keyframes streakBurst{0%{transform:translate(-50%,-50%) scale(.2) rotate(-10deg);opacity:0}55%{transform:translate(-50%,-50%) scale(1.12) rotate(4deg);opacity:1}80%{transform:translate(-50%,-50%) scale(.96)}100%{transform:translate(-50%,-50%) scale(1) rotate(0);opacity:1}}
+        .streak-burst{animation:streakBurst .5s cubic-bezier(.2,1.2,.3,1) both}
+        @keyframes streakSpark{0%{opacity:0;transform:translateY(0) scale(.6)}30%{opacity:1}100%{opacity:0;transform:translateY(-26px) scale(1.1)}}
+        .streak-spark{animation:streakSpark .9s ease-out both}
+        @keyframes streakFlameBig{0%,100%{transform:scale(1)}50%{transform:scale(1.35) rotate(4deg)}}
+        .streak-flame-big{animation:streakFlameBig .6s ease both}
+        @keyframes nudgeDrop{0%{transform:translateY(-26px);opacity:0}60%{transform:translateY(6px);opacity:1}80%{transform:translateY(-3px)}100%{transform:translateY(0);opacity:1}}
+        .nudge-drop{animation:nudgeDrop .6s cubic-bezier(.2,1.2,.3,1) both}
+        @media (prefers-reduced-motion: reduce){.center-pow,.check-pop,.crown-drop,.flame-flicker,.streak-sweep,.streak-pop,.streak-pop-big,.streak-shake,.streak-risk-pulse,.streak-burst,.streak-spark,.streak-flame-big,.nudge-drop{animation:none}}
       `}</style>
       {children}
       {cele && <CenterBurst word={cele.word} color={cele.color} />}
@@ -3442,7 +3460,7 @@ function KidAthletes({ profile, userId }) {
 
   if (!active || loading) return <p className="font-sans text-muted text-sm">Loading your card…</p>;
   if (!active.challenge) return <ChallengeBreak />;
-  return <KidAthleteCard profile={profile} board={board} weekPts={weekPts} bonuses={bonuses} bonusProofs={bonusProofs} note={note} userId={userId} tasks={active.tasks} tiers={active.tiers} streak={streak} onChanged={load} />;
+  return <KidAthleteCard profile={profile} board={board} weekPts={weekPts} bonuses={bonuses} bonusProofs={bonusProofs} note={note} userId={userId} tasks={active.tasks} tiers={active.tiers} streak={streak} threshold={threshold} onChanged={load} />;
 }
 
 /* ---------- Kid cash earnings (computed from points — no parent action needed) ---------- */
@@ -3541,7 +3559,7 @@ function BankSheet({ earnings, weekTotals, color, challengeName, onClose }) {
   );
 }
 
-function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, userId, onChanged, tasks = [], tiers, streak = 0 }) {
+function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, userId, onChanged, tasks = [], tiers, streak = 0, threshold = 0.5 }) {
   const today = todayKey();
   const [selDay, setSelDay] = useState(today);
   const weekStart = weekDates()[0];
@@ -3584,12 +3602,56 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
   const nextPhone = phoneTiers.find(t => t.min > dailyPct + 1e-9);
   const phoneNeed = nextPhone ? Math.max(1, Math.ceil(nextPhone.min * dailyMax) - todayPts) : 0;
 
-  // ----- Streak treatment for the header -----
-  const flameColor = streak >= 30 ? '#7CC5FF' : streak >= 14 ? '#FF3D3D' : streak >= 7 ? '#FF7A1A' : '#FFA53C';
+  // ----- Streak card (Phase 6): tie the streak to TODAY via the family threshold -----
+  const flameColor = streak >= 30 ? '#7CC5FF' : streak >= 14 ? '#FF3D3D' : '#FF7A1A';
+  const streakNeed = Math.max(1, Math.ceil((typeof threshold === 'number' ? threshold : 0.5) * dailyMax));
+  const streakLeft = Math.max(0, streakNeed - todayPts);
+  const todayKept = dailyMax > 0 && todayPts >= streakNeed;
+  const isEvening = new Date().getHours() >= 17;
+  const streakState = todayKept ? 'locked' : (streak >= 1 && isEvening ? 'risk' : 'needs');
+  const STREAK_C = { needs: '#FF7A1A', risk: '#FF4D5E', locked: '#46E5A0' };
+  const streakColor = STREAK_C[streakState];
+  // lock-in celebration: fire once when today flips to "kept" (not on a fresh load of an already-kept day)
+  const seenNotKept = useRef(false);
+  const [streakBurst, setStreakBurst] = useState(false);
+  useEffect(() => {
+    if (!todayKept) { seenNotKept.current = true; return; }
+    const ck = `pl_streakkept_${userId}_${today}`;
+    let done = false; try { done = localStorage.getItem(ck) === '1'; } catch {}
+    if (!done && seenNotKept.current) {
+      setStreakBurst(true);
+      try { localStorage.setItem(ck, '1'); } catch {}
+      const t = setTimeout(() => setStreakBurst(false), 1500);
+      return () => clearTimeout(t);
+    }
+  }, [todayKept, userId, today]);
+  // 5pm evening nudge: drop-in + bounce, tap-to-dismiss after 2s, once per day
+  const nudgeKey = `pl_streaknudge_${userId}_${today}`;
+  const [showNudge, setShowNudge] = useState(false);
+  const [nudgeArmed, setNudgeArmed] = useState(false);
+  useEffect(() => {
+    if (streak >= 1 && !todayKept && isEvening) {
+      let dismissed = false; try { dismissed = localStorage.getItem(nudgeKey) === '1'; } catch {}
+      if (!dismissed) { setShowNudge(true); const t = setTimeout(() => setNudgeArmed(true), 2000); return () => clearTimeout(t); }
+    }
+    setShowNudge(false);
+  }, [streak, todayKept, isEvening, nudgeKey]);
+  const dismissNudge = () => { if (!nudgeArmed) return; setShowNudge(false); try { localStorage.setItem(nudgeKey, '1'); } catch {} };
 
   return (
     <div className="relative bg-panel rounded-2xl p-4 mb-4" style={{ borderLeft: `4px solid ${hero}` }}>
       {dailyMax > 0 && todayPts === dailyMax && <div className="absolute -top-3 left-2 z-10"><Burst color={hero} label="POW!" /></div>}
+
+      {showNudge && (
+        <div onClick={dismissNudge} className={`nudge-drop relative flex items-center gap-2.5 rounded-xl mb-3 ${nudgeArmed ? 'cursor-pointer' : ''}`}
+             style={{ padding: '11px 13px', background: 'linear-gradient(150deg, rgba(255,122,26,.18), #20212B)', border: '1.5px solid rgba(255,122,26,.55)' }}>
+          <Flame size={20} className="flame-flicker shrink-0" style={{ color: '#FF7A1A' }} />
+          <p className="font-sans flex-1" style={{ fontSize: '13px', lineHeight: 1.4, color: '#F4F5FA' }}>
+            Don't lose your <b style={{ color: '#FF7A1A' }}>{streak}-day streak!</b> Finish <b style={{ color: '#FF7A1A' }}>{streakLeft} more task{streakLeft > 1 ? 's' : ''}</b> to keep it alive.
+          </p>
+          {nudgeArmed && <span className="font-sans shrink-0" style={{ fontSize: '10px', color: '#9A9CB0' }}>tap to dismiss</span>}
+        </div>
+      )}
 
       {/* Header: identity + streak on the left, tappable money bag on the right */}
       <div className="flex items-start gap-3 mb-3">
@@ -3614,6 +3676,39 @@ function KidAthleteCard({ profile, board, weekPts, bonuses, bonusProofs, note, u
           <span className="font-display leading-none" style={{ color: hero, fontSize: '20px', marginTop: '2px' }}>${grand}</span>
         </button>
       </div>
+
+      {dailyMax > 0 && (streak >= 1 || todayPts > 0) && (
+        <div className={`relative rounded-xl overflow-hidden mb-3 ${streakState === 'risk' ? 'streak-shake streak-risk-pulse' : ''}`} style={{ border: `1px solid ${streakColor}66` }}>
+          <div key={streakState} className="streak-sweep absolute inset-0" style={{ background: `${streakColor}22` }} />
+          <div key={'c' + streakState} className={`relative ${streakState === 'locked' ? 'streak-pop-big' : 'streak-pop'}`} style={{ padding: '10px 12px' }}>
+            <div className="flex items-center gap-2.5">
+              <Flame size={22} className={streakBurst ? 'streak-flame-big' : ''} style={{ color: flameColor, filter: streakState === 'locked' ? 'drop-shadow(0 0 7px rgba(70,229,160,.7))' : streakState === 'risk' ? 'drop-shadow(0 0 7px rgba(255,77,94,.6))' : 'none' }} />
+              {streak >= 1
+                ? <div><div className="font-display leading-none" style={{ fontSize: '20px', color: flameColor }}>{streak}</div><div className="font-sans uppercase" style={{ fontSize: '9px', letterSpacing: '.07em', color: '#9A9CB0', marginTop: '2px' }}>day streak</div></div>
+                : <div className="font-sans uppercase" style={{ fontSize: '11px', letterSpacing: '.05em', color: '#9A9CB0' }}>no streak yet</div>}
+              <div className="ml-auto text-right">
+                <div className="font-display tracking-wide leading-none" style={{ fontSize: '13px', color: streakState === 'locked' ? '#46E5A0' : streakState === 'risk' ? '#FF4D5E' : hero }}>
+                  {streakState === 'locked' ? 'LOCKED IN ✓' : streakState === 'risk' ? 'ENDS AT MIDNIGHT' : `${streakLeft} MORE TODAY`}
+                </div>
+                <div className="font-sans" style={{ fontSize: '10px', color: '#9A9CB0', marginTop: '2px' }}>
+                  {streakState === 'locked' ? 'streak is safe for today' : streakState === 'risk' ? `${streakLeft} more to save it` : (streak >= 1 ? 'to keep it alive' : 'to start a streak')}
+                </div>
+              </div>
+            </div>
+            <div className="rounded-full overflow-hidden" style={{ height: 5, background: 'rgba(0,0,0,.35)', marginTop: 9 }}>
+              <div className="rounded-full" style={{ height: '100%', width: `${todayKept ? 100 : Math.round((todayPts / streakNeed) * 100)}%`, background: streakColor, transition: 'width .5s ease, background .4s' }} />
+            </div>
+          </div>
+          {streakBurst && (
+            <>
+              <div className="streak-burst absolute font-display" style={{ left: '50%', top: '50%', zIndex: 20, fontSize: '15px', color: '#0B0B0F', background: '#46E5A0', padding: '3px 11px', borderRadius: '20px', boxShadow: '0 4px 14px -3px rgba(70,229,160,.7)', whiteSpace: 'nowrap' }}>STREAK SAFE!</div>
+              {['12%', '34%', '58%', '78%', '90%'].map((L, i) => (
+                <span key={i} className="streak-spark absolute" style={{ left: L, bottom: '26%', zIndex: 19, fontSize: '13px', animationDelay: `${i * 70}ms` }}>{'✨'}</span>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Phone today = the immediate daily carrot, sitting on top of the task list */}
       {dailyMax > 0 && (
